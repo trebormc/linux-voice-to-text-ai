@@ -18,7 +18,7 @@ fi
 # Configuration
 readonly PID_FILE="${HOME}/.recordpid"
 readonly FILE="${HOME}/.voice-to-text/recording"
-readonly MAX_DURATION="${MAX_DURATION:-300}"  # Default to 5 minutes if not set
+readonly MAX_DURATION="${MAX_DURATION:-120}"  # Default to 5 minutes if not set
 readonly AUDIO_INPUT="${AUDIO_INPUT:-default}"
 readonly TRANSCRIPTION_LANGUAGE="${TRANSCRIPTION_LANGUAGE:-en}"
 readonly OPENAI_MODEL="${OPENAI_MODEL:-whisper-1}"

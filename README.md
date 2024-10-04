@@ -1,35 +1,65 @@
-# Linux voice typing
+# Linux voice to text AI (with Whisper or Deepgram)
 
 ## Install
 
 ```bash
-sudo apt install xdotool jq curl arecord killall -y
+sudo apt install pulseaudio-utils jq curl xdotool -y
 ```
 
-You will need to set up an openAI or Deepgram key and put it in the `~/.ai-token` file
+You can use the `.env.example` file as a template to create your own `.env` file. Simply duplicate the `.env.example` file, rename it to `.env`, and then fill in the corresponding API key, either for OpenAI or Deepgram, depending on which service you want to use. The `.env` file should be in the same directory as the script. The content of the file will be similar to this:
 
-```txt
-DEEPGRAM_TOKEN=xxxx
+```
 OPEN_AI_TOKEN='sk-xxxx'
-```
-
-you will need to select a device to record from, you can find the device name with:
-
-```bash
-arecord -l
-```
-
+# or
+DEEPGRAM_TOKEN=xxxx
 
 ## Usage
 
 Start the recording:
 
 ```bash
-./voice-typing.sh
+./transcribe.sh
 ```
 
-Stop the recording writing the text you spoke to your current cursor position:
+Stop the recording and transcribe the audio:
 
 ```bash
-./voice-typing.sh
+./transcribe.sh
 ```
+
+The transcribed text will be automatically copied to your clipboard and pasted at your current cursor position.
+
+## Features
+
+- Supports both OpenAI and Deepgram for transcription
+- Automatically limits recording duration (default 2 minutes)
+- Plays sound notifications for start, stop, and end of transcription (if configured)
+- Supports various clipboard tools (xclip, wl-copy)
+- Automatically pastes transcribed text (using xdotool)
+
+## Dependencies
+
+- pulseaudio-utils (parecord)
+- jq
+- curl
+- xdotool
+- xclip or wl-copy (for clipboard functionality)
+
+Make sure all dependencies are installed before running the script.
+
+## Keyboard Shortcut Recommendation
+
+For a more convenient usage, it is highly recommended to set up a keyboard shortcut to execute the `transcribe.sh` script. This way, you can start and stop the recording with a simple key combination, making the process much more efficient.
+
+To set up a keyboard shortcut:
+
+1. Open your system's keyboard settings.
+2. Add a new custom shortcut.
+3. Set the command to the full path of your script, e.g., `/path/to/your/transcribe.sh`
+4. Assign a key combination that's easy for you to remember and use, e.g., `Ctrl+Alt+R`
+
+With this setup, you can:
+- Press the shortcut once to start recording
+- Press it again to stop recording and generate the transcription
+
+This method significantly streamlines the transcription process, allowing you to seamlessly integrate voice-to-text functionality into your workflow without interrupting your typing or navigation.
