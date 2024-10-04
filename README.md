@@ -13,6 +13,13 @@ OPEN_AI_TOKEN='sk-xxxx'
 # or
 DEEPGRAM_TOKEN=xxxx
 
+
+**Recommendation:** While this script supports both OpenAI's Whisper and Deepgram, we highly recommend using Deepgram for your transcription needs. Deepgram offers several advantages:
+1. Faster processing times: Deepgram typically transcribes audio more quickly than the Whisper API.
+2. Cost-effectiveness: Deepgram is generally more cost-effective, especially for frequent transcription tasks.
+3. Improved accuracy: Deepgram tends to have fewer hallucinations compared to OpenAI's Whisper. Whisper has been known to occasionally generate words that were not present in the original audio, while Deepgram typically provides more accurate transcriptions.
+
+
 ## Usage
 
 Start the recording:
