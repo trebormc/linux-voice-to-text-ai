@@ -5,12 +5,12 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# Load configuration
+source "$HOME/.env"
+
 # Configuration
 readonly PID_FILE="${HOME}/.recordpid"
-readonly FILE="${HOME}/.voice-type/recording"
-readonly MAX_DURATION=120
-readonly AUDIO_INPUT='@DEFAULT_SOURCE@' # Use PulseAudio default monitor
-source "$HOME/.ai-token"      # Ensure this file has restrictive permissions
+readonly FILE="${HOME}/.voice-to-text/recording"
 
 start_recording() {
   mkdir -p "$(dirname "$FILE")"
@@ -53,7 +53,7 @@ write_transcript() {
   fi
   perl -pi -e 'chomp if eof' "$FILE.txt"
   iconv -f UTF-8 -t UTF-8 -c "$FILE.txt" > "${FILE}_utf8.txt"
-  LANG=es_ES.UTF-8 LC_ALL=es_ES.UTF-8 xdotool type --clearmodifiers --file "${FILE}_utf8.txt"
+  LANG="${TRANSCRIPTION_LANGUAGE}_${TRANSCRIPTION_LANGUAGE^^}.UTF-8" LC_ALL="${TRANSCRIPTION_LANGUAGE}_${TRANSCRIPTION_LANGUAGE^^}.UTF-8" xdotool type --clearmodifiers --file "${FILE}_utf8.txt"
   rm -f "${FILE}_utf8.txt"
 }
 
@@ -68,10 +68,10 @@ transcribe_with_openai() {
     --header "Authorization: Bearer $OPEN_AI_TOKEN" \
     --header 'Content-Type: multipart/form-data' \
     --form file="@$FILE.wav" \
-    --form model=whisper-1 \
+    --form model="$OPENAI_MODEL" \
     --form response_format=text \
     --form temperature=0.0 \
-    --form language=es \
+    --form language="$TRANSCRIPTION_LANGUAGE" \
     -o "${FILE}.txt"
   echo "Transcription completed."
 }
@@ -83,7 +83,7 @@ transcribe_with_deepgram() {
   fi
   echo "Transcribing with Deepgram..."
   curl --silent --fail --request POST \
-    --url 'https://api.deepgram.com/v1/listen?smart_format=true&paragraphs=true&punctuate=true&language=es&model=nova-2' \
+    --url "$DEEPGRAM_URL" \
     --header "Authorization: Token $DEEPGRAM_TOKEN" \
     --header 'Content-Type: audio/wav' \
     --data-binary "@$FILE.wav" \
@@ -122,17 +122,15 @@ main() {
   sanity_check
 
   if [[ -f "$PID_FILE" ]]; then
-    paplay /usr/share/sounds/freedesktop/stereo/service-logout.oga || true
-    # sleep 0.5
+    paplay "$SOUND_STOP_RECORDING" || true
     stop_recording
     transcript
     write_transcript
     rm -f "$FILE.wav" "$FILE.txt" "${FILE}_error.log" "${FILE}_output.log"
-    paplay /usr/share/sounds/freedesktop/stereo/audio-volume-change.oga || true
+    paplay "$SOUND_END_TRANSCRIPTION" || true
   else
     start_recording
-    # sleep 0.5
-    paplay /usr/share/sounds/freedesktop/stereo/service-login.oga || true
+    paplay "$SOUND_START_RECORDING" || true
   fi
 }
 
