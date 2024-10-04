@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: Execute ./transcribe.sh twice to start and stop recording
-# Dependencies: curl, jq, parecord, xdotool, killall, paplay (optional)
+# Dependencies: curl, jq, parecord, xdotool, killall, paplay (optional), xclip or wl-copy (for clipboard functionality)
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -69,7 +69,7 @@ copy_to_clipboard() {
     elif command_exists wl-copy; then
         wl-copy
     else
-        echo "Error: No clipboard tool found. Install xclip, xsel, or wl-copy." >&2
+        echo "Error: No clipboard tool found. Install xclip or wl-copy." >&2
         return 1
     fi
 }
@@ -157,7 +157,7 @@ transcribe_with_deepgram() {
     echo "Transcription completed."
 }
 
-transcript() {
+transcribe() {
     if [[ -n "${DEEPGRAM_TOKEN:-}" ]]; then
         transcribe_with_deepgram
     elif [[ -n "${OPEN_AI_TOKEN:-}" ]]; then
@@ -168,7 +168,6 @@ transcript() {
     fi
 }
 
-# Add this to your sanity_check function
 check_clipboard_tools() {
     if ! command_exists xclip && ! command_exists wl-copy; then
         echo "Warning: No clipboard tool found. Install xclip or wl-copy for clipboard functionality." >&2
@@ -210,7 +209,7 @@ main() {
     if [[ -f "$PID_FILE" ]]; then
         play_sound "$SOUND_STOP_RECORDING"
         stop_recording
-        transcript
+        transcribe
         write_transcript
         rm -f "$FILE.wav" "$FILE.txt" "${FILE}_error.log" "${FILE}_output.log"
         play_sound "$SOUND_END_TRANSCRIPTION"
