@@ -12,7 +12,7 @@ You can use the `.env.example` file as a template to create your own `.env` file
 OPEN_AI_TOKEN='sk-xxxx'
 # or
 DEEPGRAM_TOKEN=xxxx
-
+```
 
 **Recommendation:** While this script supports both OpenAI's Whisper and Deepgram, we highly recommend using Deepgram for your transcription needs. Deepgram offers several advantages:
 1. Faster processing times: Deepgram typically transcribes audio more quickly than the Whisper API.
