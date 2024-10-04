@@ -19,10 +19,10 @@ fi
 readonly PID_FILE="${HOME}/.recordpid"
 readonly FILE="${HOME}/.voice-to-text/recording"
 readonly MAX_DURATION="${MAX_DURATION:-120}"
-readonly AUDIO_INPUT="${AUDIO_INPUT:-default}"
+readonly AUDIO_INPUT="${AUDIO_INPUT:-@DEFAULT_SOURCE@}"
 readonly TRANSCRIPTION_LANGUAGE="${TRANSCRIPTION_LANGUAGE:-en}"
 readonly OPENAI_MODEL="${OPENAI_MODEL:-whisper-1}"
-readonly DEEPGRAM_PARAMS="${DEEPGRAM_PARAMS:-model=nova}"
+readonly DEEPGRAM_PARAMS="${DEEPGRAM_PARAMS:-smart_format=true&paragraphs=true&punctuate=true&model=nova-2}"
 readonly AUDIO_FORMAT="flac"
 
 command_exists() {
