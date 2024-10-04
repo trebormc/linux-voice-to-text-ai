@@ -33,8 +33,8 @@ start_recording() {
     mkdir -p "$(dirname "$FILE")"
     echo "Starting new recording..."
     # Use timeout to limit the recording duration
-    timeout "$MAX_DURATION" parecord --channels=1 --format=s16le --rate=44100 --file-format=wav \
-        --device="$AUDIO_INPUT" "$FILE.wav" \
+    timeout "$MAX_DURATION" parecord --channels=1 --format=s16le --rate=16000 --file-format=flac \
+        --device="$AUDIO_INPUT" "$FILE.flac" \
         2>"${FILE}_error.log" >"${FILE}_output.log" &
     echo $! > "$PID_FILE"
     
@@ -111,8 +111,8 @@ write_transcript() {
 }
 
 transcribe_with_openai() {
-    if [[ ! -f "$FILE.wav" ]]; then
-        echo "Audio file not found: $FILE.wav" >&2
+    if [[ ! -f "$FILE.flac" ]]; then
+        echo "Audio file not found: $FILE.flac" >&2
         return 1
     fi
     echo "Transcribing with OpenAI..."
@@ -120,7 +120,7 @@ transcribe_with_openai() {
         --url https://api.openai.com/v1/audio/transcriptions \
         --header "Authorization: Bearer $OPEN_AI_TOKEN" \
         --header 'Content-Type: multipart/form-data' \
-        --form file="@$FILE.wav" \
+        --form file="@$FILE.flac" \
         --form model="$OPENAI_MODEL" \
         --form response_format=text \
         --form temperature=0.0 \
@@ -133,8 +133,8 @@ transcribe_with_openai() {
 }
 
 transcribe_with_deepgram() {
-    if [[ ! -f "$FILE.wav" ]]; then
-        echo "Audio file not found: $FILE.wav" >&2
+    if [[ ! -f "$FILE.flac" ]]; then
+        echo "Audio file not found: $FILE.flac" >&2
         return 1
     fi
     echo "Transcribing with Deepgram..."
@@ -145,15 +145,14 @@ transcribe_with_deepgram() {
     if ! curl --silent --fail --request POST \
         --url "${FULL_DEEPGRAM_URL}" \
         --header "Authorization: Token ${DEEPGRAM_TOKEN}" \
-        --header 'Content-Type: audio/wav' \
-        --data-binary "@$FILE.wav" \
+        --header 'Content-Type: audio/flac' \
+        --data-binary "@$FILE.flac" \
         -o "${FILE}.json"; then
         echo "Error: Deepgram transcription failed." >&2
         return 1
     fi
 
     jq '.results.channels[0].alternatives[0].transcript' -r "${FILE}.json" > "${FILE}.txt"
-    # rm -f "${FILE}.json"
     echo "Transcription completed."
 }
 
@@ -211,7 +210,7 @@ main() {
         stop_recording
         transcribe
         write_transcript
-        rm -f "$FILE.wav" "$FILE.txt" "${FILE}_error.log" "${FILE}_output.log"
+        rm -f "$FILE.flac" "$FILE.txt" "${FILE}_error.log" "${FILE}_output.log"
         play_sound "$SOUND_END_TRANSCRIPTION"
     else
         start_recording
