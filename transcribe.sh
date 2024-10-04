@@ -61,6 +61,27 @@ stop_recording() {
     echo "Recording stopped."
 }
 
+copy_to_clipboard() {
+    if command_exists xclip; then
+        xclip -selection clipboard
+    elif command_exists wl-copy; then
+        wl-copy
+    else
+        echo "Error: No clipboard tool found. Install xclip, xsel, or wl-copy." >&2
+        return 1
+    fi
+}
+
+paste_from_clipboard() {
+    if command_exists xdotool; then
+        sleep 0.2
+        xdotool key ctrl+v
+    else
+        echo "Warning: xdotool not found. Unable to paste automatically. Please paste manually." >&2
+        return 1
+    fi
+}
+
 write_transcript() {
     if [[ ! -f "$FILE.txt" ]]; then
         echo "Transcript file not found: $FILE.txt" >&2
@@ -70,10 +91,20 @@ write_transcript() {
     perl -pi -e 'chomp if eof' "$FILE.txt"
     # Ensure proper UTF-8 encoding
     iconv -f UTF-8 -t UTF-8 -c "$FILE.txt" > "${FILE}_utf8.txt"
-    # Type the transcript using xdotool
-    LANG="${TRANSCRIPTION_LANGUAGE}_${TRANSCRIPTION_LANGUAGE^^}.UTF-8" \
-    LC_ALL="${TRANSCRIPTION_LANGUAGE}_${TRANSCRIPTION_LANGUAGE^^}.UTF-8" \
-    xdotool type --clearmodifiers --file "${FILE}_utf8.txt"
+    
+    # Copy the content to clipboard
+    if copy_to_clipboard < "${FILE}_utf8.txt"; then
+        echo "Transcript copied to clipboard."
+        
+        # Try to paste the content
+        if paste_from_clipboard; then
+            echo "Transcript pasted."
+        fi
+    else
+        echo "Error: Failed to copy to clipboard." >&2
+        return 1
+    fi
+    
     rm -f "${FILE}_utf8.txt"
 }
 
@@ -120,7 +151,7 @@ transcribe_with_deepgram() {
     fi
 
     jq '.results.channels[0].alternatives[0].transcript' -r "${FILE}.json" > "${FILE}.txt"
-    rm -f "${FILE}.json"
+    # rm -f "${FILE}.json"
     echo "Transcription completed."
 }
 
@@ -135,7 +166,17 @@ transcript() {
     fi
 }
 
+# Add this to your sanity_check function
+check_clipboard_tools() {
+    if ! command_exists xclip && ! command_exists wl-copy; then
+        echo "Warning: No clipboard tool found. Install xclip or wl-copy for clipboard functionality." >&2
+        exit 1
+    fi
+}
+
 sanity_check() {
+    check_clipboard_tools
+  
     local missing_commands=()
     for cmd in xdotool parecord killall jq curl; do
         if ! command_exists "$cmd"; then
