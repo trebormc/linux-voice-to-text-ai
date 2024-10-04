@@ -6,7 +6,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # Load configuration
-source "$HOME/.env"
+source ".env"
 
 # Configuration
 readonly PID_FILE="${HOME}/.recordpid"
@@ -82,9 +82,13 @@ transcribe_with_deepgram() {
     return 1
   fi
   echo "Transcribing with Deepgram..."
+
+  # Construct the full URL
+  FULL_DEEPGRAM_URL="https://api.deepgram.com/v1/listen?${DEEPGRAM_PARAMS}&language=${TRANSCRIPTION_LANGUAGE}"
+
   curl --silent --fail --request POST \
-    --url "$DEEPGRAM_URL" \
-    --header "Authorization: Token $DEEPGRAM_TOKEN" \
+    --url "${FULL_DEEPGRAM_URL}" \
+    --header "Authorization: Token ${DEEPGRAM_TOKEN}" \
     --header 'Content-Type: audio/wav' \
     --data-binary "@$FILE.wav" \
     -o "${FILE}.json"
