@@ -18,14 +18,13 @@ fi
 # Configuration
 readonly PID_FILE="${HOME}/.recordpid"
 readonly FILE="${HOME}/.voice-to-text/recording"
-readonly MAX_DURATION="${MAX_DURATION:-120}"  # Default to 5 minutes if not set
+readonly MAX_DURATION="${MAX_DURATION:-120}"
 readonly AUDIO_INPUT="${AUDIO_INPUT:-default}"
 readonly TRANSCRIPTION_LANGUAGE="${TRANSCRIPTION_LANGUAGE:-en}"
 readonly OPENAI_MODEL="${OPENAI_MODEL:-whisper-1}"
 readonly DEEPGRAM_PARAMS="${DEEPGRAM_PARAMS:-model=nova}"
-readonly AUDIO_FORMAT="flac"  # New line: Set audio format to Opus
+readonly AUDIO_FORMAT="flac"
 
-# Function to check if a command exists
 command_exists() {
     command -v "$1" &> /dev/null
 }
@@ -33,7 +32,6 @@ command_exists() {
 start_recording() {
     mkdir -p "$(dirname "$FILE")"
     echo "Starting new recording..."
-    # Use timeout to limit the recording duration
     timeout "$MAX_DURATION" parecord --channels=1 --format=s16le --rate=16000 \
         --device="$AUDIO_INPUT" "$FILE.$AUDIO_FORMAT" \
         2>"${FILE}_error.log" >"${FILE}_output.log" &
@@ -95,11 +93,9 @@ write_transcript() {
     # Ensure proper UTF-8 encoding
     iconv -f UTF-8 -t UTF-8 -c "$FILE.txt" > "${FILE}_utf8.txt"
     
-    # Copy the content to clipboard
     if copy_to_clipboard < "${FILE}_utf8.txt"; then
         echo "Transcript copied to clipboard."
         
-        # Try to paste the content
         if paste_from_clipboard; then
             echo "Transcript pasted."
         fi
@@ -140,7 +136,6 @@ transcribe_with_deepgram() {
     fi
     echo "Transcribing with Deepgram..."
 
-    # Construct the full URL
     local FULL_DEEPGRAM_URL="https://api.deepgram.com/v1/listen?${DEEPGRAM_PARAMS}&language=${TRANSCRIPTION_LANGUAGE}"
 
     if ! curl --silent --fail --request POST \
