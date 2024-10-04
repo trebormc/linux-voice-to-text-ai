@@ -5,11 +5,13 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 # Load configuration
-if [[ -f ".env" ]]; then
-    source ".env"
+if [[ -f "${SCRIPT_DIR}/.env" ]]; then
+    source "${SCRIPT_DIR}/.env"
 else
-    echo "Error: .env file not found." >&2
+    echo "Error: .env file not found in ${SCRIPT_DIR}" >&2
     exit 1
 fi
 
