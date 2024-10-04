@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: Execute ./transcribe.sh twice to start and stop recording
-# Dependencies: curl, jq, parecord, xdotool, killall, paplay (optional), xclip or wl-copy (for clipboard functionality)
+# Dependencies: curl, jq, parecord, xdotool, xclip or wl-copy (for clipboard functionality)
 
 set -euo pipefail
 IFS=$'\n\t'
