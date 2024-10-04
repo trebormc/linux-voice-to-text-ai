@@ -23,6 +23,7 @@ readonly AUDIO_INPUT="${AUDIO_INPUT:-default}"
 readonly TRANSCRIPTION_LANGUAGE="${TRANSCRIPTION_LANGUAGE:-en}"
 readonly OPENAI_MODEL="${OPENAI_MODEL:-whisper-1}"
 readonly DEEPGRAM_PARAMS="${DEEPGRAM_PARAMS:-model=nova}"
+readonly AUDIO_FORMAT="flac"  # New line: Set audio format to Opus
 
 # Function to check if a command exists
 command_exists() {
@@ -33,8 +34,8 @@ start_recording() {
     mkdir -p "$(dirname "$FILE")"
     echo "Starting new recording..."
     # Use timeout to limit the recording duration
-    timeout "$MAX_DURATION" parecord --channels=1 --format=s16le --rate=16000 --file-format=flac \
-        --device="$AUDIO_INPUT" "$FILE.flac" \
+    timeout "$MAX_DURATION" parecord --channels=1 --format=s16le --rate=16000 \
+        --device="$AUDIO_INPUT" "$FILE.$AUDIO_FORMAT" \
         2>"${FILE}_error.log" >"${FILE}_output.log" &
     echo $! > "$PID_FILE"
     
@@ -111,8 +112,8 @@ write_transcript() {
 }
 
 transcribe_with_openai() {
-    if [[ ! -f "$FILE.flac" ]]; then
-        echo "Audio file not found: $FILE.flac" >&2
+    if [[ ! -f "$FILE.$AUDIO_FORMAT" ]]; then
+        echo "Audio file not found: $FILE.$AUDIO_FORMAT" >&2
         return 1
     fi
     echo "Transcribing with OpenAI..."
@@ -120,7 +121,7 @@ transcribe_with_openai() {
         --url https://api.openai.com/v1/audio/transcriptions \
         --header "Authorization: Bearer $OPEN_AI_TOKEN" \
         --header 'Content-Type: multipart/form-data' \
-        --form file="@$FILE.flac" \
+        --form file="@$FILE.$AUDIO_FORMAT" \
         --form model="$OPENAI_MODEL" \
         --form response_format=text \
         --form temperature=0.0 \
@@ -133,8 +134,8 @@ transcribe_with_openai() {
 }
 
 transcribe_with_deepgram() {
-    if [[ ! -f "$FILE.flac" ]]; then
-        echo "Audio file not found: $FILE.flac" >&2
+    if [[ ! -f "$FILE.$AUDIO_FORMAT" ]]; then
+        echo "Audio file not found: $FILE.$AUDIO_FORMAT" >&2
         return 1
     fi
     echo "Transcribing with Deepgram..."
@@ -145,8 +146,8 @@ transcribe_with_deepgram() {
     if ! curl --silent --fail --request POST \
         --url "${FULL_DEEPGRAM_URL}" \
         --header "Authorization: Token ${DEEPGRAM_TOKEN}" \
-        --header 'Content-Type: audio/flac' \
-        --data-binary "@$FILE.flac" \
+        --header "Content-Type: audio/$AUDIO_FORMAT" \
+        --data-binary "@$FILE.$AUDIO_FORMAT" \
         -o "${FILE}.json"; then
         echo "Error: Deepgram transcription failed." >&2
         return 1
@@ -210,7 +211,7 @@ main() {
         stop_recording
         transcribe
         write_transcript
-        rm -f "$FILE.flac" "$FILE.txt" "${FILE}_error.log" "${FILE}_output.log"
+        rm -f "$FILE.$AUDIO_FORMAT" "$FILE.txt" "${FILE}_error.log" "${FILE}_output.log"
         play_sound "$SOUND_END_TRANSCRIPTION"
     else
         start_recording
