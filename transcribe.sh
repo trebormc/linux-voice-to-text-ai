@@ -159,16 +159,16 @@ transcribe_with_local_whisper() {
     fi
     echo "Transcribing with Local Whisper..."
 
-    # Activar el entorno virtual si lo estás usando
+    # Activate virtual environment if you're using it
     source ~/virtualenvs/whisper-env/bin/activate
 
-    # Llamar al script Python
+    # Call Python script
     if ! python3 "${SCRIPT_DIR}/transcribe_audio.py" "$FILE.$AUDIO_FORMAT" "$TRANSCRIPTION_LANGUAGE"; then
         echo "Error: Local Whisper transcription failed." >&2
         return 1
     fi
 
-    # El script Python ya guarda el resultado en $FILE.txt
+    # The Python script already saves the result to $FILE.txt
     echo "Local transcription completed."
 }
 

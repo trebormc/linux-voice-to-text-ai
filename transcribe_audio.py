@@ -7,17 +7,17 @@ import subprocess
 import signal
 
 def is_server_running():
-    # Verificar si el archivo PID existe
+    # Check if PID file exists
     pid_file = os.path.expanduser("~/.whisper_server.pid")
     if not os.path.exists(pid_file):
         return False
 
-    # Leer el PID y verificar si ese proceso está corriendo
+    # Read PID and verify if that process is running
     try:
         with open(pid_file, "r") as f:
             pid = int(f.read().strip())
 
-        # Verificar si el proceso existe
+        # Check if the process exists
         with open(f"/proc/{pid}/cmdline", "rb") as f:
             cmdline = f.read().decode('utf-8', errors='ignore')
             if "whisper_server.py" in cmdline:
@@ -25,7 +25,7 @@ def is_server_running():
     except (ValueError, FileNotFoundError, IOError):
         pass
 
-    # Limpiar archivo PID obsoleto
+    # Clean up obsolete PID file
     try:
         os.remove(pid_file)
     except:
@@ -38,31 +38,31 @@ def start_server():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     server_path = os.path.join(script_dir, "whisper_server.py")
 
-    # Asegurar que el archivo tiene permisos de ejecución
+    # Ensure the file has execution permissions
     os.chmod(server_path, 0o755)
 
-    # Instalar dependencias necesarias
+    # Install necessary dependencies
     try:
         import flask
     except ImportError:
         print("Installing Flask...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "flask"])
 
-    # Iniciar el servidor en segundo plano
-    server_process = subprocess.Popen(
+    # Start the server in the background
+    subprocess.Popen(
         [sys.executable, server_path],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True
     )
 
-    # Esperar hasta que el servidor esté listo (con timeout)
+    # Wait until the server is ready (with timeout)
     start_time = time.time()
-    while time.time() - start_time < 120:  # 2 minutos de timeout
+    while time.time() - start_time < 120:  # 2 minutes timeout
         try:
-            # Verificar si el servidor responde
+            # Check if the server is responding
             if os.path.exists(os.path.expanduser("~/.whisper_server.pid")):
-                time.sleep(5)  # Dar tiempo para que el modelo se cargue completamente
+                time.sleep(5)  # Give time for the model to fully load
                 return True
         except:
             pass
@@ -72,13 +72,13 @@ def start_server():
     return False
 
 def transcribe_audio(audio_file, language="es"):
-    # Asegurarse de que el servidor esté corriendo
+    # Make sure the server is running
     if not is_server_running():
         if not start_server():
             print("Failed to start the transcription server")
             return None
 
-    print(f"Sending audio to transcription service...")
+    print("Sending audio to transcription service...")
     try:
         with open(audio_file, 'rb') as f:
             files = {'file': f}
@@ -86,7 +86,7 @@ def transcribe_audio(audio_file, language="es"):
             response = requests.post('http://127.0.0.1:5000/transcribe',
                                     files=files,
                                     data=data,
-                                    timeout=180)  # 3 minutos de timeout
+                                    timeout=180)  # 3 minutes timeout
 
         if response.status_code == 200:
             result = response.json()
@@ -110,7 +110,7 @@ if __name__ == "__main__":
     audio_file = sys.argv[1]
     language = sys.argv[2] if len(sys.argv) > 2 else "es"
 
-    # Instalar requests si no está disponible
+    # Install requests if not available
     try:
         import requests
     except ImportError:
@@ -118,9 +118,9 @@ if __name__ == "__main__":
         subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
         import requests
 
-    # Transcribir
+    # Transcribe
     result = transcribe_audio(audio_file, language)
     if result:
-        print(f"Transcription complete")
+        print("Transcription complete")
     else:
         print("Transcription failed")
