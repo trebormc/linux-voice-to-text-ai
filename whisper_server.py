@@ -24,9 +24,8 @@ TEMP_FILE_PREFIX = "/tmp/whisper_temp"
 def initialize_model():
     """Initialize and load the speech recognition model."""
     logger.info("Loading Whisper model...")
-    # Use smaller model for better CPU performance
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    model_id = "openai/whisper-small"  # Faster than large-v3
+    model_id = "openai/whisper-large-v3-turbo"  # Faster than large-v3
 
     speech_recognition_pipeline = pipeline(
         "automatic-speech-recognition",
