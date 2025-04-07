@@ -36,7 +36,7 @@ start_recording() {
         --device="$AUDIO_INPUT" "$FILE.$AUDIO_FORMAT" \
         2>"${FILE}_error.log" >"${FILE}_output.log" &
     echo $! > "$PID_FILE"
-    
+
     if [[ -s "${FILE}_error.log" ]]; then
         echo "Error starting recording. Check ${FILE}_error.log for details." >&2
         cat "${FILE}_error.log" >&2
@@ -92,10 +92,10 @@ write_transcript() {
     perl -pi -e 'chomp if eof' "$FILE.txt"
     # Ensure proper UTF-8 encoding
     iconv -f UTF-8 -t UTF-8 -c "$FILE.txt" > "${FILE}_utf8.txt"
-    
+
     if copy_to_clipboard < "${FILE}_utf8.txt"; then
         echo "Transcript copied to clipboard."
-        
+
         if paste_from_clipboard; then
             echo "Transcript pasted."
         fi
@@ -103,7 +103,7 @@ write_transcript() {
         echo "Error: Failed to copy to clipboard." >&2
         return 1
     fi
-    
+
     rm -f "${FILE}_utf8.txt"
 }
 
@@ -152,13 +152,35 @@ transcribe_with_deepgram() {
     echo "Transcription completed."
 }
 
+transcribe_with_local_whisper() {
+    if [[ ! -f "$FILE.$AUDIO_FORMAT" ]]; then
+        echo "Audio file not found: $FILE.$AUDIO_FORMAT" >&2
+        return 1
+    fi
+    echo "Transcribing with Local Whisper..."
+
+    # Activar el entorno virtual si lo estás usando
+    source ~/virtualenvs/whisper-env/bin/activate
+
+    # Llamar al script Python
+    if ! python3 "${SCRIPT_DIR}/transcribe_audio.py" "$FILE.$AUDIO_FORMAT" "$TRANSCRIPTION_LANGUAGE"; then
+        echo "Error: Local Whisper transcription failed." >&2
+        return 1
+    fi
+
+    # El script Python ya guarda el resultado en $FILE.txt
+    echo "Local transcription completed."
+}
+
 transcribe() {
-    if [[ -n "${DEEPGRAM_TOKEN:-}" ]]; then
+    if [[ "${ENABLE_LOCAL_WHISPER:-false}" == "true" ]]; then
+        transcribe_with_local_whisper
+    elif [[ -n "${DEEPGRAM_TOKEN:-}" ]]; then
         transcribe_with_deepgram
     elif [[ -n "${OPEN_AI_TOKEN:-}" ]]; then
         transcribe_with_openai
     else
-        echo "Error: Neither DEEPGRAM_TOKEN nor OPEN_AI_TOKEN is set." >&2
+        echo "Error: No transcription service configured." >&2
         return 1
     fi
 }
@@ -172,23 +194,24 @@ check_clipboard_tools() {
 
 sanity_check() {
     check_clipboard_tools
-  
+
     local missing_commands=()
     for cmd in xdotool parecord killall jq curl; do
         if ! command_exists "$cmd"; then
             missing_commands+=("$cmd")
         fi
     done
-    
+
     if [[ ${#missing_commands[@]} -gt 0 ]]; then
         echo "Error: The following commands are not found: ${missing_commands[*]}" >&2
         exit 1
     fi
 
-    if [[ -z "${DEEPGRAM_TOKEN:-}" ]] && [[ -z "${OPEN_AI_TOKEN:-}" ]]; then
-        echo "Error: You must set either the DEEPGRAM_TOKEN or OPEN_AI_TOKEN environment variable." >&2
-        exit 1
-    fi
+    if [[ "${ENABLE_LOCAL_WHISPER:-false}" != "true" ]] && [[ -z "${DEEPGRAM_TOKEN:-}" ]] && [[ -z "${OPEN_AI_TOKEN:-}" ]]; then
+            echo "Error: You must either enable local Whisper or set DEEPGRAM_TOKEN or OPEN_AI_TOKEN environment variable." >&2
+            exit 1
+        fi
+
 }
 
 play_sound() {
