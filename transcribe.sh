@@ -238,7 +238,6 @@ check_dependencies() {
     fi
 }
 
-# Función principal para grabación y transcripción en tiempo real
 interactive_record_and_transcribe() {
     # Crear directorios necesarios
     mkdir -p "$(dirname "$FILE")" "$STREAMING_TEMP_DIR"
@@ -254,82 +253,82 @@ interactive_record_and_transcribe() {
     # Reproducir sonido de inicio si está configurado
     play_sound "$SOUND_START_RECORDING"
 
-    # Iniciar un proceso en segundo plano para grabación y transcripción continua
-    (
-        segment=1
-        while true; do
-            # Nombre del archivo del segmento
-            segment_file="${STREAMING_TEMP_DIR}/segment_${segment}.${AUDIO_FORMAT}"
+    # ENFOQUE ALTERNATIVO: Grabar un solo archivo largo y luego procesarlo
+    # Este enfoque es más fiable que intentar grabar y procesar segmentos en paralelo
 
-            # Grabar segmento
-            parecord --channels=1 --format=s16le --rate=16000 \
-                --device="$AUDIO_INPUT" "$segment_file" --duration=$STREAM_SEGMENT_DURATION \
-                2>/dev/null >/dev/null
+    # Archivo temporal para la grabación completa
+    full_recording="${STREAMING_TEMP_DIR}/full_recording.flac"
 
-            # Verificar si el archivo se grabó correctamente
-            if [[ ! -f "$segment_file" || ! -s "$segment_file" ]]; then
-                rm -f "$segment_file"
-                sleep 0.5
-                continue
-            fi
-
-            # Transcribir segmento
-            segment_text=""
-            if [[ "${ENABLE_LOCAL_WHISPER:-false}" == "true" ]]; then
-                segment_text=$(transcribe_segment_with_local_whisper "$segment_file" "$TRANSCRIPTION_LANGUAGE")
-            elif [[ -n "${DEEPGRAM_TOKEN:-}" ]]; then
-                segment_text=$(transcribe_segment_with_deepgram "$segment_file")
-            elif [[ -n "${OPEN_AI_TOKEN:-}" ]]; then
-                segment_text=$(transcribe_segment_with_openai "$segment_file")
-            fi
-
-            # Limpiar segmento de audio
-            rm -f "$segment_file"
-
-            # Actualizar transcripción si hay texto
-            if [[ -n "$segment_text" ]]; then
-                # Añadir al archivo acumulado
-                echo "$segment_text" >> "$STREAMING_OUTPUT_FILE"
-
-                # Actualizar archivo final
-                cat "$STREAMING_OUTPUT_FILE" > "$FILE.txt"
-
-                # Mostrar en consola
-                echo "Nuevo texto: $segment_text"
-            fi
-
-            ((segment++))
-
-            # Verificar si debemos seguir grabando
-            if [[ -f "/tmp/stop_recording" ]]; then
-                break
-            fi
-        done
-    ) &
+    # Iniciar grabación en segundo plano
+    parecord --channels=1 --format=s16le --rate=16000 \
+        --file-format=flac \
+        --device="$AUDIO_INPUT" \
+        "$full_recording" > /dev/null 2>&1 &
 
     recording_pid=$!
+    echo "Started recording process with PID $recording_pid"
 
     # Esperar a que el usuario presione cualquier tecla
-    echo "Recording in progress. Transcription will appear here as you speak."
-    echo "Press any key to stop recording..."
-
-    # Leer una tecla sin mostrarla en pantalla
+    echo "Recording in progress. Press any key to stop recording..."
     read -n 1 -s
 
-    # Crear archivo de señal para detener la grabación
-    touch "/tmp/stop_recording"
-
-    # Detener proceso de grabación
-    kill $recording_pid 2>/dev/null || true
+    # Detener el proceso de grabación
+    kill $recording_pid
     wait $recording_pid 2>/dev/null || true
 
-    # Eliminar archivo de señal
-    rm -f "/tmp/stop_recording"
+    # Verificar si se grabó el archivo
+    if [[ ! -f "$full_recording" || ! -s "$full_recording" ]]; then
+        echo "Error: No se pudo grabar audio. Verifique su micrófono."
+        play_sound "$SOUND_STOP_RECORDING"
+        return 1
+    fi
 
-    # Reproducir sonido de finalización si está configurado
+    echo "Recording completed. Starting transcription..."
     play_sound "$SOUND_STOP_RECORDING"
 
-    echo "Recording stopped."
+    # Transcribir el archivo completo
+    if [[ "${ENABLE_LOCAL_WHISPER:-false}" == "true" ]]; then
+        echo "Transcribing with Local Whisper..."
+        source "$VENV_DIR/bin/activate"
+        python3 "${SCRIPT_DIR}/transcribe_audio.py" "$full_recording" "$TRANSCRIPTION_LANGUAGE"
+        deactivate
+
+        # Obtener el resultado
+        txt_file="${full_recording%.*}.txt"
+        if [[ -f "$txt_file" ]]; then
+            cat "$txt_file" > "$FILE.txt"
+        fi
+    elif [[ -n "${DEEPGRAM_TOKEN:-}" ]]; then
+        echo "Transcribing with Deepgram..."
+        local temp_output="${STREAMING_TEMP_DIR}/output.json"
+        local FULL_DEEPGRAM_URL="https://api.deepgram.com/v1/listen?${DEEPGRAM_PARAMS:-smart_format=true&paragraphs=true&punctuate=true&model=nova-2}&language=${TRANSCRIPTION_LANGUAGE}"
+
+        curl -s -X POST \
+            -H "Authorization: Token ${DEEPGRAM_TOKEN}" \
+            -H "Content-Type: audio/$AUDIO_FORMAT" \
+            --data-binary "@$full_recording" \
+            "$FULL_DEEPGRAM_URL" \
+            -o "$temp_output"
+
+        jq '.results.channels[0].alternatives[0].transcript' -r "$temp_output" > "$FILE.txt"
+    elif [[ -n "${OPEN_AI_TOKEN:-}" ]]; then
+        echo "Transcribing with OpenAI..."
+        curl -s -X POST \
+            -H "Authorization: Bearer $OPEN_AI_TOKEN" \
+            -H "Content-Type: multipart/form-data" \
+            -F "file=@$full_recording" \
+            -F "model=${OPENAI_MODEL:-whisper-1}" \
+            -F "response_format=text" \
+            -F "temperature=0.0" \
+            -F "language=$TRANSCRIPTION_LANGUAGE" \
+            "https://api.openai.com/v1/audio/transcriptions" \
+            -o "$FILE.txt"
+    else
+        echo "Error: No transcription service configured."
+        return 1
+    fi
+
+    echo "Transcription completed."
     echo "Final transcript:"
     echo "-----------------"
     cat "$FILE.txt"
@@ -346,12 +345,11 @@ interactive_record_and_transcribe() {
         fi
     fi
 
-    # Reproducir sonido de finalización de transcripción
+    # Reproducir sonido de finalización
     play_sound "$SOUND_END_TRANSCRIPTION"
 
     # Limpiar archivos temporales
     rm -rf "$STREAMING_TEMP_DIR"
-    rm -f "$STREAMING_OUTPUT_FILE"
 }
 
 main() {
