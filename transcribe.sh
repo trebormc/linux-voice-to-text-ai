@@ -6,6 +6,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+VENV_DIR="${HOME}/virtualenvs/whisper-env"
 
 # Load configuration
 if [[ -f "${SCRIPT_DIR}/.env" ]]; then
@@ -24,6 +25,30 @@ readonly TRANSCRIPTION_LANGUAGE="${TRANSCRIPTION_LANGUAGE:-en}"
 readonly OPENAI_MODEL="${OPENAI_MODEL:-whisper-1}"
 readonly DEEPGRAM_PARAMS="${DEEPGRAM_PARAMS:-smart_format=true&paragraphs=true&punctuate=true&model=nova-2}"
 readonly AUDIO_FORMAT="flac"
+
+# Setup virtual environment if needed
+setup_venv() {
+    if [[ ! -d "$VENV_DIR" ]]; then
+        echo "Setting up virtual environment for Whisper..."
+        # Check if python3-venv is installed
+        if ! dpkg -l | grep -q python3-venv; then
+            echo "Installing python3-venv..."
+            sudo apt-get update
+            sudo apt-get install -y python3-venv python3-full
+        fi
+
+        # Create virtual environment
+        python3 -m venv "$VENV_DIR"
+
+        # Activate and install dependencies
+        source "$VENV_DIR/bin/activate"
+        pip install --upgrade pip
+        pip install faster-whisper flask requests torch
+        deactivate
+
+        echo "Virtual environment setup complete."
+    fi
+}
 
 command_exists() {
     command -v "$1" &> /dev/null
@@ -159,14 +184,21 @@ transcribe_with_local_whisper() {
     fi
     echo "Transcribing with Local Whisper..."
 
-    # Activate virtual environment if you're using it
-    source ~/virtualenvs/whisper-env/bin/activate
+    # Make sure virtual environment is set up
+    setup_venv
+
+    # Activate virtual environment and run transcription
+    source "$VENV_DIR/bin/activate"
 
     # Call Python script
     if ! python3 "${SCRIPT_DIR}/transcribe_audio.py" "$FILE.$AUDIO_FORMAT" "$TRANSCRIPTION_LANGUAGE"; then
         echo "Error: Local Whisper transcription failed." >&2
+        deactivate
         return 1
     fi
+
+    # Deactivate virtual environment
+    deactivate
 
     # The Python script already saves the result to $FILE.txt
     echo "Local transcription completed."
@@ -196,7 +228,7 @@ sanity_check() {
     check_clipboard_tools
 
     local missing_commands=()
-    for cmd in xdotool parecord killall jq curl; do
+    for cmd in xdotool parecord jq curl; do
         if ! command_exists "$cmd"; then
             missing_commands+=("$cmd")
         fi
@@ -211,7 +243,6 @@ sanity_check() {
             echo "Error: You must either enable local Whisper or set DEEPGRAM_TOKEN or OPEN_AI_TOKEN environment variable." >&2
             exit 1
         fi
-
 }
 
 play_sound() {
