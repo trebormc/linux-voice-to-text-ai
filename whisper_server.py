@@ -30,7 +30,7 @@ def initialize_model():
     speech_recognition_pipeline = pipeline(
         "automatic-speech-recognition",
         model=model_id,
-        torch_dtype=torch.float32,
+        torch_dtype=torch.float16,
         device=device,
     )
     logger.info(f"Model loaded on {device}")
@@ -60,8 +60,8 @@ def transcribe():
         # Process with Whisper model
         result = pipe(
             temp_path,
-            chunk_length_s=30,
-            batch_size=8,
+            chunk_length_s=15,
+            batch_size=24,
             return_timestamps=False,
             generate_kwargs={"language": language}  # Pass language correctly
         )
