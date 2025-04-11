@@ -80,9 +80,11 @@ def transcribe():
         segments, _ = pipe.transcribe(
             temp_path,
             language=language,
-            beam_size=5,
+            beam_size=2,
             vad_filter=True,  # Filter silences for faster processing
-            word_timestamps=False
+            word_timestamps=False,
+            # condition_on_previous_text=False,
+            # temperature=0.0
         )
         text = " ".join(segment.text for segment in segments)
         return jsonify({"text": text})
