@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-import torch
-from transformers import pipeline
+from faster_whisper import WhisperModel
 from flask import Flask, request, jsonify
 import os
 import signal
-import sys
-import subprocess
 import logging
 
 # Configure logging
@@ -22,19 +19,17 @@ PID_FILE_PATH = os.path.expanduser("~/.whisper_server.pid")
 TEMP_FILE_PREFIX = "/tmp/whisper_temp"
 
 def initialize_model():
-    """Initialize and load the speech recognition model."""
-    logger.info("Loading Whisper model...")
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    model_id = "openai/whisper-large-v3-turbo"  # Faster than large-v3
-
-    speech_recognition_pipeline = pipeline(
-        "automatic-speech-recognition",
-        model=model_id,
-        torch_dtype=torch.float16,
+    logger.info("Loading Faster-Whisper model...")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model_id = "large-v3-turbo"
+    model = WhisperModel(
+        model_id,
         device=device,
+        compute_type="float16",  # O "int8" para cuantización
+        num_workers=2  # Ajustar según CPU/GPU
     )
     logger.info(f"Model loaded on {device}")
-    return speech_recognition_pipeline
+    return model
 
 # Initialize model on startup
 pipe = initialize_model()
@@ -50,23 +45,22 @@ def transcribe():
         return jsonify({"error": "No file provided"}), 400
 
     audio_file = request.files['file']
-    language = request.form.get('language', 'en')  # Default to English
+    language = request.form.get('language', 'es')  # Cambiar a español por defecto
 
     # Save file temporarily
     temp_path = f"{TEMP_FILE_PREFIX}_{os.getpid()}.flac"
     audio_file.save(temp_path)
 
     try:
-        # Process with Whisper model
-        result = pipe(
+        segments, _ = pipe.transcribe(
             temp_path,
-            chunk_length_s=15,
-            batch_size=24,
-            return_timestamps=False,
-            generate_kwargs={"language": language}  # Pass language correctly
+            language=language,
+            beam_size=5,
+            vad_filter=True,  # Filtra silencios para mayor velocidad
+            word_timestamps=False
         )
-
-        return jsonify({"text": result["text"]})
+        text = " ".join(segment.text for segment in segments)
+        return jsonify({"text": text})
     except Exception as e:
         logger.error(f"Transcription error: {str(e)}")
         return jsonify({"error": "Transcription failed"}), 500
