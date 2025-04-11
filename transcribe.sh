@@ -7,6 +7,7 @@ IFS=$'\n\t'
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 VENV_DIR="${HOME}/virtualenvs/whisper-env"
+SERVER_PID_FILE="${HOME}/.whisper_server.pid"
 
 # Load configuration
 if [[ -f "${SCRIPT_DIR}/.env" ]]; then
@@ -25,6 +26,7 @@ readonly TRANSCRIPTION_LANGUAGE="${TRANSCRIPTION_LANGUAGE:-en}"
 readonly OPENAI_MODEL="${OPENAI_MODEL:-whisper-1}"
 readonly DEEPGRAM_PARAMS="${DEEPGRAM_PARAMS:-smart_format=true&paragraphs=true&punctuate=true&model=nova-2}"
 readonly AUDIO_FORMAT="flac"
+readonly SERVER_START_TIMEOUT=20 # Seconds to wait for server to start
 
 # Setup virtual environment if needed
 setup_venv() {
@@ -47,6 +49,66 @@ setup_venv() {
         deactivate
 
         echo "Virtual environment setup complete."
+    fi
+}
+
+# Ensure the Whisper server is always running
+ensure_whisper_server() {
+    if [[ "${ENABLE_LOCAL_WHISPER:-false}" != "true" ]]; then
+        return 0
+    fi
+
+    # Check if server is already running
+    if [[ -f "$SERVER_PID_FILE" ]]; then
+        local pid
+        pid=$(<"$SERVER_PID_FILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "Whisper server is already running with PID $pid."
+            return 0
+        else
+            echo "Whisper server PID file exists but server is not running. Will start the server."
+            rm -f "$SERVER_PID_FILE"
+        fi
+    fi
+
+    # Start the server in the background
+    echo "Starting Whisper server..."
+    setup_venv
+    source "$VENV_DIR/bin/activate"
+
+    nohup python3 "${SCRIPT_DIR}/whisper_server.py" > "${HOME}/whisper_server.log" 2>&1 &
+
+    # Store PID and wait for the server to start
+    local server_pid=$!
+    echo "$server_pid" > "$SERVER_PID_FILE"
+
+    # Wait for server to be ready (check if it's responsive)
+    echo "Waiting for Whisper server to initialize..."
+    local start_time=$(date +%s)
+    local attempts=0
+    local max_attempts=20
+
+    while [[ $attempts -lt $max_attempts ]]; do
+        if curl -s "http://127.0.0.1:5000/health" >/dev/null 2>&1; then
+            echo "Whisper server started successfully."
+            break
+        fi
+
+        # Check if process is still running
+        if ! kill -0 $server_pid 2>/dev/null; then
+            echo "Error: Whisper server process terminated unexpectedly."
+            cat "${HOME}/whisper_server.log"
+            return 1
+        fi
+
+        echo "Waiting for server to become responsive (attempt $((attempts+1))/$max_attempts)..."
+        sleep 2
+        ((attempts++))
+    done
+
+    if [[ $attempts -eq $max_attempts ]]; then
+        echo "Error: Timed out waiting for Whisper server to start."
+        return 1
     fi
 }
 
@@ -254,6 +316,8 @@ play_sound() {
 
 main() {
     sanity_check
+
+    ensure_whisper_server
 
     if [[ -f "$PID_FILE" ]]; then
         play_sound "$SOUND_STOP_RECORDING"

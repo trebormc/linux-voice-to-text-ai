@@ -41,13 +41,13 @@ def initialize_model():
 
     model_id = "large-v3-turbo"
 
-    # Añadir marca de tiempo para medir el tiempo de carga
+    # Add timestamp to measure loading time
     start_time = time.time()
     model = WhisperModel(
         model_id,
         device=device,
         compute_type="float16" if device == "cuda" else "int8",
-        num_workers=2
+        num_workers=4  # Increased from 2 for better performance
     )
 
     load_time = time.time() - start_time
@@ -70,7 +70,7 @@ def transcribe():
         return jsonify({"error": "No file provided"}), 400
 
     audio_file = request.files['file']
-    language = request.form.get('language', 'es')  # Cambiar a español por defecto
+    language = request.form.get('language', 'en')  # Default to English
 
     # Save file temporarily
     temp_path = f"{TEMP_FILE_PREFIX}_{os.getpid()}.flac"
@@ -81,7 +81,7 @@ def transcribe():
             temp_path,
             language=language,
             beam_size=5,
-            vad_filter=True,  # Filtra silencios para mayor velocidad
+            vad_filter=True,  # Filter silences for faster processing
             word_timestamps=False
         )
         text = " ".join(segment.text for segment in segments)
@@ -94,7 +94,6 @@ def transcribe():
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
-# Añadir este nuevo endpoint justo aquí
 @app.route('/health', methods=['GET'])
 def health_check():
     """Simple health check endpoint to verify server is running."""
@@ -114,8 +113,9 @@ signal.signal(signal.SIGTERM, signal_handler)
 if __name__ == '__main__':
     # Ensure Flask is available
     try:
-        app.run(host='127.0.0.1', port=5000)
+        # Run server with threaded=True for better performance with multiple requests
+        app.run(host='127.0.0.1', port=5000, threaded=True)
     except ModuleNotFoundError:
         logger.info("Installing Flask...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "flask"])
-        app.run(host='127.0.0.1', port=5000)
+        app.run(host='127.0.0.1', port=5000, threaded=True)
