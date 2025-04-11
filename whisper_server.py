@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 import torch
 from faster_whisper import WhisperModel
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import os
 import signal
 import logging
 import sys
 import subprocess
 import time
+import json
+from threading import Lock
 
 # Ensure output is not buffered
 sys.stdout.reconfigure(line_buffering=True)
@@ -24,6 +26,15 @@ app = Flask(__name__)
 # Path constants
 PID_FILE_PATH = os.path.expanduser("~/.whisper_server.pid")
 TEMP_FILE_PREFIX = "/tmp/whisper_temp"
+
+# Streaming context
+STREAMING_CONTEXT = {
+    "previous_text": "",
+    "session_active": False,
+    "last_segment_time": 0,
+    "accumulated_text": ""
+}
+context_lock = Lock()
 
 def initialize_model():
     print("Loading Faster-Whisper large-v3-turbo model... This may take several minutes on first run")
@@ -91,6 +102,86 @@ def transcribe():
     except Exception as e:
         logger.error(f"Transcription error: {str(e)}")
         return jsonify({"error": "Transcription failed"}), 500
+    finally:
+        # Clean up temporary file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+@app.route('/stream-start', methods=['POST'])
+def stream_start():
+    """Initialize a new streaming session"""
+    with context_lock:
+        STREAMING_CONTEXT["previous_text"] = ""
+        STREAMING_CONTEXT["session_active"] = True
+        STREAMING_CONTEXT["last_segment_time"] = time.time()
+        STREAMING_CONTEXT["accumulated_text"] = ""
+
+    return jsonify({"status": "streaming session started"})
+
+@app.route('/stream-end', methods=['POST'])
+def stream_end():
+    """End streaming session and return final transcript"""
+    with context_lock:
+        STREAMING_CONTEXT["session_active"] = False
+        final_text = STREAMING_CONTEXT["accumulated_text"]
+        STREAMING_CONTEXT["accumulated_text"] = ""
+
+    return jsonify({"status": "streaming ended", "final_text": final_text})
+
+@app.route('/stream-transcribe', methods=['POST'])
+def stream_transcribe():
+    """Transcribe a chunk of audio in streaming mode"""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    audio_file = request.files['file']
+    language = request.form.get('language', 'en')
+
+    # Get the current context
+    with context_lock:
+        previous_text = STREAMING_CONTEXT["previous_text"]
+
+    # Save file temporarily
+    temp_path = f"{TEMP_FILE_PREFIX}_stream_{os.getpid()}.flac"
+    audio_file.save(temp_path)
+
+    try:
+        segments, _ = pipe.transcribe(
+            temp_path,
+            language=language,
+            beam_size=1,  # Lower beam size for faster processing
+            vad_filter=True,
+            word_timestamps=False,
+            initial_prompt=previous_text,  # Use previous text as context
+            temperature=0.0
+        )
+
+        # Extract text from segments
+        segment_texts = [segment.text for segment in segments]
+        current_text = " ".join(segment_texts)
+
+        # Update the streaming context
+        with context_lock:
+            # Keep track of the complete accumulated text
+            if segment_texts:
+                # Only add if we got actual content
+                if STREAMING_CONTEXT["accumulated_text"]:
+                    STREAMING_CONTEXT["accumulated_text"] += " " + current_text
+                else:
+                    STREAMING_CONTEXT["accumulated_text"] = current_text
+
+            # Update context for next chunk
+            if current_text.strip():  # Only update if we got actual content
+                STREAMING_CONTEXT["previous_text"] = current_text
+            STREAMING_CONTEXT["last_segment_time"] = time.time()
+
+        return jsonify({
+            "text": current_text,
+            "accumulated_text": STREAMING_CONTEXT["accumulated_text"]
+        })
+    except Exception as e:
+        logger.error(f"Streaming transcription error: {str(e)}")
+        return jsonify({"error": f"Streaming transcription failed: {str(e)}"}), 500
     finally:
         # Clean up temporary file
         if os.path.exists(temp_path):

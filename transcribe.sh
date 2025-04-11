@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Usage: Execute ./transcribe.sh twice to start and stop recording
-# Dependencies: curl, jq, parecord, xdotool, xclip or wl-copy (for clipboard functionality)
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -18,15 +16,13 @@ else
 fi
 
 # Configuration
-readonly PID_FILE="${HOME}/.recordpid"
 readonly FILE="${HOME}/.voice-to-text/recording"
-readonly MAX_DURATION="${MAX_DURATION:-120}"
 readonly AUDIO_INPUT="${AUDIO_INPUT:-@DEFAULT_SOURCE@}"
 readonly TRANSCRIPTION_LANGUAGE="${TRANSCRIPTION_LANGUAGE:-en}"
-readonly OPENAI_MODEL="${OPENAI_MODEL:-whisper-1}"
-readonly DEEPGRAM_PARAMS="${DEEPGRAM_PARAMS:-smart_format=true&paragraphs=true&punctuate=true&model=nova-2}"
 readonly AUDIO_FORMAT="flac"
-readonly SERVER_START_TIMEOUT=20 # Seconds to wait for server to start
+readonly STREAM_SEGMENT_DURATION=3  # Duración de cada segmento en segundos
+readonly STREAMING_TEMP_DIR="${HOME}/.voice-to-text/temp_segments"
+readonly STREAMING_OUTPUT_FILE="${HOME}/.voice-to-text/streaming_output.txt"
 
 # Setup virtual environment if needed
 setup_venv() {
@@ -52,7 +48,7 @@ setup_venv() {
     fi
 }
 
-# Ensure the Whisper server is always running
+# Ensure the Whisper server is running
 ensure_whisper_server() {
     if [[ "${ENABLE_LOCAL_WHISPER:-false}" != "true" ]]; then
         return 0
@@ -82,9 +78,8 @@ ensure_whisper_server() {
     local server_pid=$!
     echo "$server_pid" > "$SERVER_PID_FILE"
 
-    # Wait for server to be ready (check if it's responsive)
+    # Wait for server to be ready
     echo "Waiting for Whisper server to initialize..."
-    local start_time=$(date +%s)
     local attempts=0
     local max_attempts=20
 
@@ -116,37 +111,82 @@ command_exists() {
     command -v "$1" &> /dev/null
 }
 
-start_recording() {
-    mkdir -p "$(dirname "$FILE")"
-    echo "Starting new recording..."
-    timeout "$MAX_DURATION" parecord --channels=1 --format=s16le --rate=16000 \
-        --device="$AUDIO_INPUT" "$FILE.$AUDIO_FORMAT" \
-        2>"${FILE}_error.log" >"${FILE}_output.log" &
-    echo $! > "$PID_FILE"
+# Transcribe a single segment with local Whisper
+transcribe_segment_with_local_whisper() {
+    local segment_file="$1"
+    local language="$2"
 
-    if [[ -s "${FILE}_error.log" ]]; then
-        echo "Error starting recording. Check ${FILE}_error.log for details." >&2
-        cat "${FILE}_error.log" >&2
+    if [[ ! -f "$segment_file" ]]; then
+        echo ""
         return 1
     fi
-    echo "Recording started with PID $(cat "$PID_FILE"). Will stop automatically after $MAX_DURATION seconds."
+
+    # Make API call directly to server
+    local result
+    result=$(curl -s -X POST \
+        -F "file=@$segment_file" \
+        -F "language=$language" \
+        http://127.0.0.1:5000/transcribe)
+
+    # Extract text from JSON
+    echo "$result" | grep -o '"text":"[^"]*"' | sed 's/"text":"//;s/"$//'
 }
 
-stop_recording() {
-    echo "Stopping recording..."
-    if [[ -s "$PID_FILE" ]]; then
-        local pid
-        pid=$(<"$PID_FILE")
-        if kill -0 "$pid" 2>/dev/null; then
-            kill "$pid"
-            timeout 5s tail --pid="$pid" -f /dev/null
-            echo "Recording process $pid stopped."
-        else
-            echo "Process $pid not found, cleaning up..."
-        fi
-        rm -f "$PID_FILE"
+# Transcribe a single segment with Deepgram
+transcribe_segment_with_deepgram() {
+    local segment_file="$1"
+
+    if [[ ! -f "$segment_file" ]]; then
+        echo ""
+        return 1
     fi
-    echo "Recording stopped."
+
+    local temp_output="/tmp/segment_output.json"
+    local FULL_DEEPGRAM_URL="https://api.deepgram.com/v1/listen?${DEEPGRAM_PARAMS:-smart_format=true&paragraphs=true&punctuate=true&model=nova-2}&language=${TRANSCRIPTION_LANGUAGE}"
+
+    if curl --silent --fail --request POST \
+        --url "${FULL_DEEPGRAM_URL}" \
+        --header "Authorization: Token ${DEEPGRAM_TOKEN}" \
+        --header "Content-Type: audio/$AUDIO_FORMAT" \
+        --data-binary "@$segment_file" \
+        -o "$temp_output"; then
+
+        jq '.results.channels[0].alternatives[0].transcript' -r "$temp_output"
+        return 0
+    else
+        echo ""
+        return 1
+    fi
+}
+
+# Transcribe a single segment with OpenAI
+transcribe_segment_with_openai() {
+    local segment_file="$1"
+
+    if [[ ! -f "$segment_file" ]]; then
+        echo ""
+        return 1
+    fi
+
+    local temp_output="/tmp/segment_output.txt"
+
+    if curl --silent --fail --request POST \
+        --url https://api.openai.com/v1/audio/transcriptions \
+        --header "Authorization: Bearer $OPEN_AI_TOKEN" \
+        --header 'Content-Type: multipart/form-data' \
+        --form file="@$segment_file" \
+        --form model="${OPENAI_MODEL:-whisper-1}" \
+        --form response_format=text \
+        --form temperature=0.0 \
+        --form language="$TRANSCRIPTION_LANGUAGE" \
+        -o "$temp_output"; then
+
+        cat "$temp_output"
+        return 0
+    else
+        echo ""
+        return 1
+    fi
 }
 
 copy_to_clipboard() {
@@ -170,127 +210,16 @@ paste_from_clipboard() {
     fi
 }
 
-write_transcript() {
-    if [[ ! -f "$FILE.txt" ]]; then
-        echo "Transcript file not found: $FILE.txt" >&2
-        return 1
-    fi
-    # Remove trailing newline if present
-    perl -pi -e 'chomp if eof' "$FILE.txt"
-    # Ensure proper UTF-8 encoding
-    iconv -f UTF-8 -t UTF-8 -c "$FILE.txt" > "${FILE}_utf8.txt"
-
-    if copy_to_clipboard < "${FILE}_utf8.txt"; then
-        echo "Transcript copied to clipboard."
-
-        if paste_from_clipboard; then
-            echo "Transcript pasted."
-        fi
-    else
-        echo "Error: Failed to copy to clipboard." >&2
-        return 1
-    fi
-
-    rm -f "${FILE}_utf8.txt"
-}
-
-transcribe_with_openai() {
-    if [[ ! -f "$FILE.$AUDIO_FORMAT" ]]; then
-        echo "Audio file not found: $FILE.$AUDIO_FORMAT" >&2
-        return 1
-    fi
-    echo "Transcribing with OpenAI..."
-    if ! curl --silent --fail --request POST \
-        --url https://api.openai.com/v1/audio/transcriptions \
-        --header "Authorization: Bearer $OPEN_AI_TOKEN" \
-        --header 'Content-Type: multipart/form-data' \
-        --form file="@$FILE.$AUDIO_FORMAT" \
-        --form model="$OPENAI_MODEL" \
-        --form response_format=text \
-        --form temperature=0.0 \
-        --form language="$TRANSCRIPTION_LANGUAGE" \
-        -o "${FILE}.txt"; then
-        echo "Error: OpenAI transcription failed." >&2
-        return 1
-    fi
-    echo "Transcription completed."
-}
-
-transcribe_with_deepgram() {
-    if [[ ! -f "$FILE.$AUDIO_FORMAT" ]]; then
-        echo "Audio file not found: $FILE.$AUDIO_FORMAT" >&2
-        return 1
-    fi
-    echo "Transcribing with Deepgram..."
-
-    local FULL_DEEPGRAM_URL="https://api.deepgram.com/v1/listen?${DEEPGRAM_PARAMS}&language=${TRANSCRIPTION_LANGUAGE}"
-
-    if ! curl --silent --fail --request POST \
-        --url "${FULL_DEEPGRAM_URL}" \
-        --header "Authorization: Token ${DEEPGRAM_TOKEN}" \
-        --header "Content-Type: audio/$AUDIO_FORMAT" \
-        --data-binary "@$FILE.$AUDIO_FORMAT" \
-        -o "${FILE}.json"; then
-        echo "Error: Deepgram transcription failed." >&2
-        return 1
-    fi
-
-    jq '.results.channels[0].alternatives[0].transcript' -r "${FILE}.json" > "${FILE}.txt"
-    echo "Transcription completed."
-}
-
-transcribe_with_local_whisper() {
-    if [[ ! -f "$FILE.$AUDIO_FORMAT" ]]; then
-        echo "Audio file not found: $FILE.$AUDIO_FORMAT" >&2
-        return 1
-    fi
-    echo "Transcribing with Local Whisper..."
-
-    # Make sure virtual environment is set up
-    setup_venv
-
-    # Activate virtual environment and run transcription
-    source "$VENV_DIR/bin/activate"
-
-    # Call Python script
-    if ! python3 "${SCRIPT_DIR}/transcribe_audio.py" "$FILE.$AUDIO_FORMAT" "$TRANSCRIPTION_LANGUAGE"; then
-        echo "Error: Local Whisper transcription failed." >&2
-        deactivate
-        return 1
-    fi
-
-    # Deactivate virtual environment
-    deactivate
-
-    # The Python script already saves the result to $FILE.txt
-    echo "Local transcription completed."
-}
-
-transcribe() {
-    if [[ "${ENABLE_LOCAL_WHISPER:-false}" == "true" ]]; then
-        transcribe_with_local_whisper
-    elif [[ -n "${DEEPGRAM_TOKEN:-}" ]]; then
-        transcribe_with_deepgram
-    elif [[ -n "${OPEN_AI_TOKEN:-}" ]]; then
-        transcribe_with_openai
-    else
-        echo "Error: No transcription service configured." >&2
-        return 1
+play_sound() {
+    local sound_file="$1"
+    if command_exists paplay && [[ -f "$sound_file" ]]; then
+        paplay "$sound_file" || true
     fi
 }
 
-check_clipboard_tools() {
-    if ! command_exists xclip && ! command_exists wl-copy; then
-        echo "Warning: No clipboard tool found. Install xclip or wl-copy for clipboard functionality." >&2
-        exit 1
-    fi
-}
-
-sanity_check() {
-    check_clipboard_tools
-
+check_dependencies() {
     local missing_commands=()
-    for cmd in xdotool parecord jq curl; do
+    for cmd in parecord curl jq; do
         if ! command_exists "$cmd"; then
             missing_commands+=("$cmd")
         fi
@@ -301,35 +230,139 @@ sanity_check() {
         exit 1
     fi
 
-    if [[ "${ENABLE_LOCAL_WHISPER:-false}" != "true" ]] && [[ -z "${DEEPGRAM_TOKEN:-}" ]] && [[ -z "${OPEN_AI_TOKEN:-}" ]]; then
-            echo "Error: You must either enable local Whisper or set DEEPGRAM_TOKEN or OPEN_AI_TOKEN environment variable." >&2
-            exit 1
-        fi
+    if [[ "${ENABLE_LOCAL_WHISPER:-false}" != "true" ]] &&
+       [[ -z "${DEEPGRAM_TOKEN:-}" ]] &&
+       [[ -z "${OPEN_AI_TOKEN:-}" ]]; then
+        echo "Error: You must either enable local Whisper or set DEEPGRAM_TOKEN or OPEN_AI_TOKEN environment variable." >&2
+        exit 1
+    fi
 }
 
-play_sound() {
-    local sound_file="$1"
-    if command_exists paplay && [[ -f "$sound_file" ]]; then
-        paplay "$sound_file" || true
+# Función principal para grabación y transcripción en tiempo real
+interactive_record_and_transcribe() {
+    # Crear directorios necesarios
+    mkdir -p "$(dirname "$FILE")" "$STREAMING_TEMP_DIR"
+
+    # Inicializar archivos de salida
+    echo "" > "$STREAMING_OUTPUT_FILE"
+    echo "" > "$FILE.txt"
+
+    # Informar al usuario
+    echo "Starting voice recording for transcription..."
+    echo "Speak into your microphone. Press any key to stop recording."
+
+    # Reproducir sonido de inicio si está configurado
+    play_sound "$SOUND_START_RECORDING"
+
+    # Iniciar un proceso en segundo plano para grabación y transcripción continua
+    (
+        segment=1
+        while true; do
+            # Nombre del archivo del segmento
+            segment_file="${STREAMING_TEMP_DIR}/segment_${segment}.${AUDIO_FORMAT}"
+
+            # Grabar segmento
+            parecord --channels=1 --format=s16le --rate=16000 \
+                --device="$AUDIO_INPUT" "$segment_file" --duration=$STREAM_SEGMENT_DURATION \
+                2>/dev/null >/dev/null
+
+            # Verificar si el archivo se grabó correctamente
+            if [[ ! -f "$segment_file" || ! -s "$segment_file" ]]; then
+                rm -f "$segment_file"
+                sleep 0.5
+                continue
+            fi
+
+            # Transcribir segmento
+            segment_text=""
+            if [[ "${ENABLE_LOCAL_WHISPER:-false}" == "true" ]]; then
+                segment_text=$(transcribe_segment_with_local_whisper "$segment_file" "$TRANSCRIPTION_LANGUAGE")
+            elif [[ -n "${DEEPGRAM_TOKEN:-}" ]]; then
+                segment_text=$(transcribe_segment_with_deepgram "$segment_file")
+            elif [[ -n "${OPEN_AI_TOKEN:-}" ]]; then
+                segment_text=$(transcribe_segment_with_openai "$segment_file")
+            fi
+
+            # Limpiar segmento de audio
+            rm -f "$segment_file"
+
+            # Actualizar transcripción si hay texto
+            if [[ -n "$segment_text" ]]; then
+                # Añadir al archivo acumulado
+                echo "$segment_text" >> "$STREAMING_OUTPUT_FILE"
+
+                # Actualizar archivo final
+                cat "$STREAMING_OUTPUT_FILE" > "$FILE.txt"
+
+                # Mostrar en consola
+                echo "Nuevo texto: $segment_text"
+            fi
+
+            ((segment++))
+
+            # Verificar si debemos seguir grabando
+            if [[ -f "/tmp/stop_recording" ]]; then
+                break
+            fi
+        done
+    ) &
+
+    recording_pid=$!
+
+    # Esperar a que el usuario presione cualquier tecla
+    echo "Recording in progress. Transcription will appear here as you speak."
+    echo "Press any key to stop recording..."
+
+    # Leer una tecla sin mostrarla en pantalla
+    read -n 1 -s
+
+    # Crear archivo de señal para detener la grabación
+    touch "/tmp/stop_recording"
+
+    # Detener proceso de grabación
+    kill $recording_pid 2>/dev/null || true
+    wait $recording_pid 2>/dev/null || true
+
+    # Eliminar archivo de señal
+    rm -f "/tmp/stop_recording"
+
+    # Reproducir sonido de finalización si está configurado
+    play_sound "$SOUND_STOP_RECORDING"
+
+    echo "Recording stopped."
+    echo "Final transcript:"
+    echo "-----------------"
+    cat "$FILE.txt"
+    echo "-----------------"
+
+    # Copiar al portapapeles
+    if cat "$FILE.txt" | copy_to_clipboard; then
+        echo "Transcript copied to clipboard."
+
+        # Intentar pegar automáticamente si xdotool está disponible
+        if command_exists xdotool; then
+            echo "Attempting to paste automatically..."
+            paste_from_clipboard && echo "Transcript pasted."
+        fi
     fi
+
+    # Reproducir sonido de finalización de transcripción
+    play_sound "$SOUND_END_TRANSCRIPTION"
+
+    # Limpiar archivos temporales
+    rm -rf "$STREAMING_TEMP_DIR"
+    rm -f "$STREAMING_OUTPUT_FILE"
 }
 
 main() {
-    sanity_check
+    # Verificar dependencias
+    check_dependencies
 
+    # Asegurar que el servidor Whisper esté funcionando
     ensure_whisper_server
 
-    if [[ -f "$PID_FILE" ]]; then
-        play_sound "$SOUND_STOP_RECORDING"
-        stop_recording
-        transcribe
-        write_transcript
-        rm -f "$FILE.$AUDIO_FORMAT" "$FILE.txt" "${FILE}_error.log" "${FILE}_output.log"
-        play_sound "$SOUND_END_TRANSCRIPTION"
-    else
-        start_recording
-        play_sound "$SOUND_START_RECORDING"
-    fi
+    # Ejecutar grabación y transcripción interactiva
+    interactive_record_and_transcribe
 }
 
 main
