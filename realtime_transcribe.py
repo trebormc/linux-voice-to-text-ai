@@ -11,6 +11,7 @@ import requests
 import dotenv
 import argparse
 from pathlib import Path
+import queue
 
 # Determinar directorio de script y cargar variables de entorno
 SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -36,7 +37,7 @@ VOICE_TO_TEXT_DIR = f"{HOME_DIR}/.voice-to-text"
 RECORDING_FILE = f"{VOICE_TO_TEXT_DIR}/recording"
 TEMP_SEGMENTS_DIR = f"{VOICE_TO_TEXT_DIR}/temp_segments"
 STREAMING_OUTPUT_FILE = f"{VOICE_TO_TEXT_DIR}/streaming_output.txt"
-SEGMENT_DURATION = 3  # duración en segundos para cada segmento de transmisión
+SEGMENT_DURATION = 2  # duración en segundos para cada segmento (reducido para mayor reactividad)
 AUDIO_FORMAT = "flac"
 WHISPER_SERVER_URL = "http://127.0.0.1:5000"
 
@@ -46,6 +47,8 @@ recording_active = False
 full_transcription = ""
 segments_processed = 0
 server_streaming_session_active = False
+transcription_queue = queue.Queue()
+stop_event = threading.Event()
 
 # Preparar directorios
 os.makedirs(VOICE_TO_TEXT_DIR, exist_ok=True)
@@ -135,7 +138,7 @@ def end_streaming_session():
 def transcribe_segment_with_whisper_streaming(segment_file):
     """Transcribe un segmento usando la API de streaming del servidor Whisper"""
     if not os.path.exists(segment_file) or os.path.getsize(segment_file) == 0:
-        return ""
+        return "", ""
 
     try:
         with open(segment_file, 'rb') as f:
@@ -277,59 +280,119 @@ def start_recording():
             recording_active = False
             return None
 
-def process_streaming_segments():
-    """Procesa segmentos de audio para transcripción en tiempo real"""
-    global recording_active, full_transcription, segments_processed
+def extract_audio_segment(start_time, duration, output_file):
+    """Extrae un segmento de audio del archivo principal en tiempo real"""
+    try:
+        full_recording = f"{TEMP_SEGMENTS_DIR}/full_recording.{AUDIO_FORMAT}"
 
-    # Iniciar sesión de streaming con el servidor
-    if ENABLE_LOCAL_WHISPER:
-        start_streaming_session()
+        # Verificar si el archivo existe y tiene contenido
+        if not os.path.exists(full_recording) or os.path.getsize(full_recording) == 0:
+            return False
 
-    print("Procesando segmentos en tiempo real...")
+        # Extraer segmento
+        segment_cmd = [
+            "ffmpeg", "-y",
+            "-i", full_recording,
+            "-ss", str(start_time),
+            "-t", str(duration),
+            "-c:a", "flac",
+            output_file
+        ]
+
+        subprocess.run(segment_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Verificar si se creó el archivo y tiene contenido
+        return os.path.exists(output_file) and os.path.getsize(output_file) > 0
+    except Exception as e:
+        print(f"Error extrayendo segmento de audio: {e}")
+        return False
+
+def audio_segmenter_thread():
+    """Hilo que segmenta continuamente el audio para su procesamiento"""
+    global segments_processed, recording_active
+
+    segment_index = 0
+    while recording_active and not stop_event.is_set():
+        # Calcular tiempo de inicio para el segmento actual
+        start_time = segment_index * SEGMENT_DURATION
+
+        # Generar nombre para el segmento
+        segment_file = f"{TEMP_SEGMENTS_DIR}/segment_{segment_index}.{AUDIO_FORMAT}"
+
+        # Extraer segmento
+        if extract_audio_segment(start_time, SEGMENT_DURATION, segment_file):
+            # Poner el segmento en la cola para procesamiento
+            transcription_queue.put((segment_index, segment_file))
+            segment_index += 1
+
+        # Esperar un tiempo menor que la duración del segmento para superposición
+        time.sleep(SEGMENT_DURATION * 0.5)
+
+def transcription_processor_thread():
+    """Hilo que procesa los segmentos de audio y actualiza la transcripción"""
+    global full_transcription, recording_active
+
+    current_text = ""
+
+    while recording_active or not transcription_queue.empty():
+        if stop_event.is_set():
+            break
+
+        try:
+            # Intentar obtener un segmento con timeout
+            segment_index, segment_file = transcription_queue.get(timeout=1)
+
+            # Transcribir segmento
+            segment_text = ""
+            accumulated_text = ""
+
+            if ENABLE_LOCAL_WHISPER:
+                segment_text, accumulated_text = transcribe_segment_with_whisper_streaming(segment_file)
+
+                # Actualizar transcripción completa si hay texto acumulado
+                if accumulated_text:
+                    full_transcription = accumulated_text
+                    # Mostrar la última parte del texto que es nueva
+                    if len(accumulated_text) > len(current_text):
+                        new_text = accumulated_text[len(current_text):]
+                        sys.stdout.write(new_text)
+                        sys.stdout.flush()
+                        current_text = accumulated_text
+
+            # Si hay texto nuevo del segmento pero no hay acumulado, mostrarlo directamente
+            elif segment_text:
+                sys.stdout.write(segment_text + " ")
+                sys.stdout.flush()
+                full_transcription += segment_text + " "
+
+            # Marcar tarea como completada
+            transcription_queue.task_done()
+
+        except queue.Empty:
+            # No hay segmentos disponibles, esperar
+            time.sleep(0.1)
+        except Exception as e:
+            print(f"\nError procesando transcripción: {e}")
+
+def display_transcription_thread():
+    """Hilo que muestra la transcripción actualizada en tiempo real"""
+    global full_transcription, recording_active
+
+    last_length = 0
 
     while recording_active:
-        # Generar nombre de archivo para el segmento
-        segment_file = f"{TEMP_SEGMENTS_DIR}/segment_{segments_processed}.{AUDIO_FORMAT}"
+        if stop_event.is_set():
+            break
 
-        # Extraer un segmento del audio principal
-        try:
-            # Crear copia del audio principal hasta el momento actual
-            full_recording = f"{TEMP_SEGMENTS_DIR}/full_recording.{AUDIO_FORMAT}"
-            if os.path.exists(full_recording) and os.path.getsize(full_recording) > 0:
-                segment_cmd = [
-                    "ffmpeg", "-y",
-                    "-i", full_recording,
-                    "-ss", str(segments_processed * SEGMENT_DURATION),
-                    "-t", str(SEGMENT_DURATION),
-                    "-c:a", "flac",
-                    segment_file
-                ]
+        # Si hay texto nuevo para mostrar
+        if len(full_transcription) > last_length:
+            # Mostrar solo el texto nuevo
+            new_text = full_transcription[last_length:]
+            sys.stdout.write(new_text)
+            sys.stdout.flush()
+            last_length = len(full_transcription)
 
-                subprocess.run(segment_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-                # Verificar si se creó el archivo y tiene contenido
-                if os.path.exists(segment_file) and os.path.getsize(segment_file) > 0:
-                    # Transcribir el segmento
-                    segment_text = ""
-                    accumulated_text = ""
-
-                    if ENABLE_LOCAL_WHISPER:
-                        segment_text, accumulated_text = transcribe_segment_with_whisper_streaming(segment_file)
-                        if accumulated_text:
-                            full_transcription = accumulated_text
-
-                    # Si hay texto, actualizar la transcripción
-                    if segment_text:
-                        print(f"\rTranscripción actual: {full_transcription}", end="", flush=True)
-
-                    segments_processed += 1
-        except Exception as e:
-            print(f"Error procesando segmento: {e}")
-
-        # Esperar un poco antes del próximo segmento
-        time.sleep(1)
-
-    print("\nProcesamiento de segmentos finalizado.")
+        time.sleep(0.1)
 
 def stop_recording():
     """Detiene la grabación de audio"""
@@ -350,6 +413,7 @@ def stop_recording():
 def handle_exit(signal, frame):
     """Maneja la señal de interrupción"""
     print("\nInterrumpiendo transcripción...")
+    stop_event.set()
     stop_recording()
     if ENABLE_LOCAL_WHISPER and server_streaming_session_active:
         end_streaming_session()
@@ -384,8 +448,8 @@ def wait_for_keypress():
                     pass
                 time.sleep(0.1)
 
-                # También verificar tiempo máximo
-                if not recording_active:
+                # También verificar tiempo máximo o evento de parada
+                if not recording_active or stop_event.is_set():
                     return
         finally:
             # Restaurar configuración
@@ -394,6 +458,43 @@ def wait_for_keypress():
     except:
         # Fallback simple
         input()
+
+def real_time_transcription_system():
+    """Implementa el sistema de transcripción en tiempo real con múltiples hilos"""
+    global full_transcription
+
+    # Iniciar sesión de streaming si corresponde
+    if ENABLE_LOCAL_WHISPER:
+        if not start_streaming_session():
+            print("No se pudo iniciar sesión de streaming con el servidor Whisper")
+            return
+
+    # Iniciar hilo de segmentación de audio
+    segmenter = threading.Thread(target=audio_segmenter_thread)
+    segmenter.daemon = True
+    segmenter.start()
+
+    # Iniciar hilo de procesamiento de transcripción
+    processor = threading.Thread(target=transcription_processor_thread)
+    processor.daemon = True
+    processor.start()
+
+    # Limpiar línea e indicar que estamos listos para transcribir
+    print("\nTranscribiendo en tiempo real. Hable ahora:")
+    print("-" * 50)
+
+    # Esperar a que el usuario detenga la grabación
+    wait_for_keypress()
+
+    # Detener sistema de transcripción
+    stop_event.set()
+
+    # Asegurar que todos los hilos terminen correctamente
+    segmenter.join(timeout=2)
+    processor.join(timeout=2)
+
+    print("\n" + "-" * 50)
+    print("Transcripción finalizada.")
 
 def main():
     global recording_active, full_transcription
@@ -438,19 +539,12 @@ def main():
     print(f"- Deepgram API: {'Configurado' if DEEPGRAM_TOKEN else 'No configurado'}")
     print(f"- Idioma: {TRANSCRIPTION_LANGUAGE}")
 
-    # Si estamos usando Whisper local, iniciar procesamiento en tiempo real
-    if ENABLE_LOCAL_WHISPER and whisper_server_available:
-        # Iniciar hilo para procesar segmentos
-        streaming_thread = threading.Thread(target=process_streaming_segments)
-        streaming_thread.daemon = True
-        streaming_thread.start()
+    # Iniciar sistema de transcripción en tiempo real
+    real_time_transcription_system()
 
-    # Esperar a que el usuario presione una tecla
-    wait_for_keypress()
-
-    # Detener grabación
-    print("\nFinalizando grabación...")
-    stop_recording()
+    # Detener grabación si aún está activa
+    if recording_active:
+        stop_recording()
 
     # Reproducir sonido de detención
     play_sound(SOUND_STOP_RECORDING)
@@ -476,10 +570,10 @@ def main():
             full_transcription = transcribe_with_openai(audio_file)
 
     # Mostrar resultado final
-    print("\nTranscripción finalizada:")
-    print("-----------------------")
+    print("\nTranscripción final:")
+    print("-" * 50)
     print(full_transcription)
-    print("-----------------------")
+    print("-" * 50)
 
     # Guardar en archivo
     with open(f"{RECORDING_FILE}.txt", "w") as f:
