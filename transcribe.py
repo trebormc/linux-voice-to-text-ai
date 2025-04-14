@@ -2,14 +2,10 @@
 import os
 import sys
 import time
-import signal
 import subprocess
-import threading
-import requests
 import dotenv
 from pathlib import Path
 import logging
-import tempfile
 import torch
 from faster_whisper import WhisperModel
 
@@ -278,15 +274,12 @@ def stop_recording(proc=None):
         pass
 
 def is_recording_active():
-    """Check if recording is currently active"""
-    if not os.path.exists(PID_FILE):
+    pid_file = os.path.expanduser("~/.voice-to-text/recording.pid")
+    if not os.path.exists(pid_file):
         return False
-
     try:
-        with open(PID_FILE, 'r') as f:
+        with open(pid_file, 'r') as f:
             pid = int(f.read().strip())
-
-        # Check if process exists and is parecord
         proc = subprocess.Popen(f"ps -p {pid} -o comm=", shell=True, stdout=subprocess.PIPE)
         output = proc.communicate()[0].decode().strip()
         return "parecord" in output
@@ -357,6 +350,10 @@ def main():
     else:
         # Start recording mode - make this as fast as possible
         # Start recording first, then play the sound
+        home_dir = os.path.expanduser("~")
+        voice_to_text_dir = f"{home_dir}/.voice-to-text"
+        os.makedirs(voice_to_text_dir, exist_ok=True)
+
         print("Starting recording...")
         recording_proc = start_recording()
 
