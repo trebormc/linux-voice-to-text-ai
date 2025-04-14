@@ -25,7 +25,7 @@ deactivate
 echo "Entorno virtual configurado."
 
 # Hacer el script ejecutable
-chmod +x "${SCRIPT_DIR}/realtime_transcribe.py"
-chmod +x "${SCRIPT_DIR}/run_transcribe.sh"
+chmod +x "${SCRIPT_DIR}/transcribe.py"
+chmod +x "${SCRIPT_DIR}/transcribe.sh"
 
-echo "Instalación completada. Puede ejecutar ./realtime_transcribe.py para comenzar a transcribir."
+echo "Instalación completada. Puede ejecutar ./transcribe.sh para comenzar a transcribir."
