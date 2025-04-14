@@ -105,12 +105,16 @@ def transcribe_with_whisper(audio_file):
     try:
         with open(audio_file, 'rb') as f:
             files = {'file': f}
-            data = {'language': TRANSCRIPTION_LANGUAGE}
+            data = {
+                'language': TRANSCRIPTION_LANGUAGE,
+                'compute_type': 'int8',  # Add compute_type for faster inference
+                'beam_size': 3  # Reduce beam size for faster processing
+            }
             response = requests.post(
                 f"{WHISPER_SERVER_URL}/transcribe",
                 files=files,
                 data=data,
-                timeout=30
+                timeout=60
             )
 
         if response.status_code == 200:
