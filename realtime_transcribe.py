@@ -9,6 +9,8 @@ import requests
 import dotenv
 from pathlib import Path
 import logging
+from faster_whisper import WhisperModel
+import torch
 
 # Configure logging for debugging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -98,30 +100,35 @@ def check_whisper_server():
         return False
 
 def transcribe_with_whisper(audio_file):
-    """Transcribes using the local Whisper server"""
+    """Transcribes using the local Whisper model via faster_whisper (optimized for speed)"""
     if not os.path.exists(audio_file) or os.path.getsize(audio_file) == 0:
         return ""
 
     try:
-        with open(audio_file, 'rb') as f:
-            files = {'file': f}
-            data = {
-                'language': TRANSCRIPTION_LANGUAGE,
-                'compute_type': 'int8',  # Add compute_type for faster inference
-                'beam_size': 3  # Reduce beam size for faster processing
-            }
-            response = requests.post(
-                f"{WHISPER_SERVER_URL}/transcribe",
-                files=files,
-                data=data,
-                timeout=60
-            )
+        print("Loading Whisper model...")
+        model_size = os.getenv("WHISPER_MODEL_SIZE", "medium")  # Changed default to small
+        num_threads = int(os.getenv("WHISPER_CPU_THREADS", "4"))  # Get thread count from env
 
-        if response.status_code == 200:
-            return response.json().get("text", "")
-        else:
-            logger.error(f"Error in transcription: {response.status_code}")
-            return ""
+        model = WhisperModel(
+            model_size,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            compute_type="int8",  # Use int8 quantization for speed
+            cpu_threads=num_threads  # Use multiple CPU threads
+        )
+
+        print(f"Transcribing with {model_size} model on {'GPU' if torch.cuda.is_available() else f'CPU ({num_threads} threads)'}")
+        segments, info = model.transcribe(
+            audio_file,
+            language=TRANSCRIPTION_LANGUAGE,
+            beam_size=2,  # Reduced beam size
+            # vad_filter=True,  # Skip non-speech parts
+            # vad_parameters=dict(min_silence_duration_ms=500),  # Tune VAD as needed
+            word_timestamps=False
+        )
+
+        # Collect all segment texts
+        result = " ".join([segment.text for segment in segments])
+        return result
     except Exception as e:
         logger.error(f"Error transcribing with Whisper: {e}")
         return ""
@@ -305,12 +312,17 @@ def main():
     signal.signal(signal.SIGTERM, handle_exit)
 
     # Check dependencies
-    whisper_server_available = False
     if ENABLE_LOCAL_WHISPER:
-        whisper_server_available = check_whisper_server()
-        if not whisper_server_available:
-            print("Error: Whisper server is not available. Run ensure_whisper_server first.")
-            return 1
+        # We don't need to check for server availability since we're using the library directly
+        try:
+            import torch
+            from faster_whisper import WhisperModel
+            whisper_available = True
+        except ImportError:
+            print("Error: faster_whisper or torch not available. Install with: pip install faster-whisper torch")
+            whisper_available = False
+    else:
+        whisper_available = False
 
     # Check if any transcription service is configured
     if not ENABLE_LOCAL_WHISPER and not OPEN_AI_TOKEN and not DEEPGRAM_TOKEN:
@@ -348,8 +360,8 @@ def main():
     print("\nProcessing the audio file...")
 
     # Process the complete audio file
-    if ENABLE_LOCAL_WHISPER and whisper_server_available:
-        print("Using local Whisper for transcription...")
+    if ENABLE_LOCAL_WHISPER and whisper_available:
+        print("Using local Whisper model for transcription...")
         full_transcription = transcribe_with_whisper(audio_file)
     elif DEEPGRAM_TOKEN:
         print("Using Deepgram API for transcription...")
