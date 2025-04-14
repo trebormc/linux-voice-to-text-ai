@@ -224,14 +224,25 @@ def start_recording():
             return None
 
 def stop_recording():
+    time.sleep(0.5)
     """Stops audio recording"""
     global recording_process, recording_active
 
     if recording_process and recording_active:
         try:
+            # Send SIGTERM and give more time for proper cleanup
             recording_process.terminate()
+            # Wait longer to ensure the audio file is properly closed
             recording_process.wait(timeout=2)
-        except:
+        except subprocess.TimeoutExpired:
+            logger.warning("Recording process taking too long to terminate, forcing kill")
+            try:
+                recording_process.kill()
+                recording_process.wait(timeout=2)
+            except:
+                logger.error("Failed to kill recording process")
+        except Exception as e:
+            logger.error(f"Error stopping recording: {e}")
             try:
                 recording_process.kill()
             except:
