@@ -297,65 +297,29 @@ def start_recording():
 
 def extract_audio_segment(start_time, duration, output_file):
     """Extrae un segmento de audio del archivo principal en tiempo real"""
-    global recording_active
-
-    if not recording_active:
-        return False
-
     try:
         full_recording = f"{TEMP_SEGMENTS_DIR}/full_recording.{AUDIO_FORMAT}"
 
-        # Verificar si el archivo existe
-        if not os.path.exists(full_recording):
+        # Verificar si el archivo existe y tiene contenido
+        if not os.path.exists(full_recording) or os.path.getsize(full_recording) == 0:
             return False
 
-        # Verificar si el archivo tiene datos suficientes (al menos 1KB)
-        try:
-            if os.path.getsize(full_recording) < 1024:
-                return False
-        except:
-            return False
-
-        # Evitar problemas de acceso concurrente con el archivo de audio
-        # Crear un archivo temporal para evitar bloqueos
-        temp_segment = tempfile.mktemp(suffix=f".{AUDIO_FORMAT}")
-
-        # Extraer segmento con ffmpeg usando una configuración más robusta
+        # Extraer segmento
         segment_cmd = [
             "ffmpeg", "-y",
             "-i", full_recording,
             "-ss", str(start_time),
             "-t", str(duration),
-            "-c:a", "pcm_s16le",  # Usar codificación sin pérdida
-            "-ar", "16000",       # Mantener frecuencia de muestreo
-            "-ac", "1",           # Mantener mono canal
-            temp_segment
+            "-c:a", "flac",
+            output_file
         ]
 
-        result = subprocess.run(segment_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(segment_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        if result.returncode != 0:
-            return False
-
-        # Verificar si se creó el archivo temporal y tiene contenido
-        if os.path.exists(temp_segment) and os.path.getsize(temp_segment) > 1024:
-            # Mover el archivo temporal al destino final para evitar problemas de acceso
-            os.rename(temp_segment, output_file)
-            return True
-        else:
-            # Limpiar archivo temporal si existe
-            if os.path.exists(temp_segment):
-                os.remove(temp_segment)
-            return False
-
+        # Verificar si se creó el archivo y tiene contenido
+        return os.path.exists(output_file) and os.path.getsize(output_file) > 0
     except Exception as e:
-        logger.error(f"Error extrayendo segmento de audio: {e}")
-        # Limpiar archivo temporal si existe
-        if 'temp_segment' in locals() and os.path.exists(temp_segment):
-            try:
-                os.remove(temp_segment)
-            except:
-                pass
+        print(f"Error extrayendo segmento de audio: {e}")
         return False
 
 def audio_segmenter_thread():
@@ -610,14 +574,14 @@ def main():
         print("Configure ENABLE_LOCAL_WHISPER=true o proporcione OPEN_AI_TOKEN o DEEPGRAM_TOKEN en el archivo .env")
         return 1
 
-    # Reproducir sonido de inicio
-    play_sound(SOUND_START_RECORDING)
-
     print(f"Transcripción configurada con:")
     print(f"- Local Whisper: {'Activado' if ENABLE_LOCAL_WHISPER else 'Desactivado'}")
     print(f"- OpenAI API: {'Configurado' if OPEN_AI_TOKEN else 'No configurado'}")
     print(f"- Deepgram API: {'Configurado' if DEEPGRAM_TOKEN else 'No configurado'}")
     print(f"- Idioma: {TRANSCRIPTION_LANGUAGE}")
+
+    # Reproducir sonido de inicio JUSTO ANTES de empezar a grabar
+    play_sound(SOUND_START_RECORDING)
 
     # Iniciar sistema de transcripción en tiempo real
     real_time_transcription_system()
@@ -665,8 +629,8 @@ def main():
         if paste_clipboard():
             print("Transcripción pegada automáticamente")
 
-    # Reproducir sonido de finalización
-    play_sound(SOUND_END_TRANSCRIPTION)
+        # Reproducir sonido de finalización DESPUÉS de copiar y pegar el texto
+        play_sound(SOUND_END_TRANSCRIPTION)
 
     return 0
 
