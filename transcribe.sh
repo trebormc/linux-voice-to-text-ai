@@ -1,23 +1,27 @@
 #!/bin/bash
 
-# Directorio del script
+# Script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+VOICE_TO_TEXT_DIR="${HOME}/.voice-to-text"
 VENV_DIR="${HOME}/virtualenvs/whisper-env"
-SERVER_PID_FILE="${HOME}/.whisper_server.pid"
 
-# Cargar variables de entorno
+# Ensure working directory exists
+mkdir -p "${VOICE_TO_TEXT_DIR}"
+
+# Load environment variables
 if [[ -f "${SCRIPT_DIR}/.env" ]]; then
     source "${SCRIPT_DIR}/.env"
-else
-    echo "Error: .env file not found in ${SCRIPT_DIR}" >&2
+fi
+
+# Check if virtual environment exists
+if [[ ! -d "$VENV_DIR" ]]; then
+    echo "Error: Environment not found at $VENV_DIR"
+    echo "Please create it with: python -m venv $VENV_DIR"
+    echo "Then install dependencies: $VENV_DIR/bin/pip install faster-whisper torch"
     exit 1
 fi
 
-# Activar el entorno virtual
+# Activate virtual environment and run Python script
 source "$VENV_DIR/bin/activate"
-
-# Ejecutar el script Python
-python3 "$SCRIPT_DIR/transcribe.py" "$@"
-
-# Desactivar el entorno virtual al finalizar
+python3 "$SCRIPT_DIR/transcribe.py"
 deactivate
