@@ -23,7 +23,11 @@ readonly AUDIO_INPUT="${AUDIO_INPUT:-@DEFAULT_SOURCE@}"
 readonly TRANSCRIPTION_LANGUAGE="${TRANSCRIPTION_LANGUAGE:-en}"
 readonly OPENAI_MODEL="${OPENAI_MODEL:-whisper-1}"
 readonly DEEPGRAM_PARAMS="${DEEPGRAM_PARAMS:-smart_format=true&paragraphs=true&punctuate=true&model=nova-2}"
-readonly AUDIO_FORMAT="flac"
+readonly AUDIO_FORMAT="${AUDIO_FORMAT:-flac}"
+readonly AUDIO_CHANNELS="${AUDIO_CHANNELS:-1}"
+readonly AUDIO_SAMPLE_RATE="${AUDIO_SAMPLE_RATE:-16000}"
+readonly CLIPBOARD_AUTO_PASTE="${CLIPBOARD_AUTO_PASTE:-true}"
+readonly NOTIFICATION_SOUND_ENABLED="${NOTIFICATION_SOUND_ENABLED:-true}"
 
 command_exists() {
     command -v "$1" &> /dev/null
@@ -32,7 +36,7 @@ command_exists() {
 start_recording() {
     mkdir -p "$(dirname "$FILE")"
     echo "Starting new recording..."
-    timeout "$MAX_DURATION" parecord --channels=1 --format=s16le --rate=16000 \
+    timeout "$MAX_DURATION" parecord --channels="$AUDIO_CHANNELS" --format=s16le --rate="$AUDIO_SAMPLE_RATE" \
         --device="$AUDIO_INPUT" "$FILE.$AUDIO_FORMAT" \
         2>"${FILE}_error.log" >"${FILE}_output.log" &
     echo $! > "$PID_FILE"
@@ -74,6 +78,11 @@ copy_to_clipboard() {
 }
 
 paste_from_clipboard() {
+    if [[ "${CLIPBOARD_AUTO_PASTE}" != "true" ]]; then
+        echo "Auto-paste is disabled. Please paste manually."
+        return 0
+    fi
+
     if command_exists xdotool; then
         sleep 0.2
         xdotool key ctrl+v
@@ -120,7 +129,7 @@ transcribe_with_openai() {
         --form file="@$FILE.$AUDIO_FORMAT" \
         --form model="$OPENAI_MODEL" \
         --form response_format=text \
-        --form temperature=0.0 \
+        --form temperature="${TRANSCRIPTION_TEMPERATURE:-0.0}" \
         --form language="$TRANSCRIPTION_LANGUAGE" \
         -o "${FILE}.txt"; then
         echo "Error: OpenAI transcription failed." >&2
@@ -159,11 +168,22 @@ transcribe_with_local_whisper() {
     fi
     echo "Transcribing with Local Whisper..."
 
-    # Activate virtual environment if you're using it
-    source ~/virtualenvs/whisper-env/bin/activate
+    # Build parameters for the Python script
+    local params=(
+        "$FILE.$AUDIO_FORMAT"
+        "$TRANSCRIPTION_LANGUAGE"
+    )
+
+    # Add transcription options if defined
+    [[ -n "${TRANSCRIPTION_TIMESTAMPS:-}" ]] && params+=("--timestamps=${TRANSCRIPTION_TIMESTAMPS}")
+    [[ -n "${TRANSCRIPTION_DIARIZATION:-}" ]] && params+=("--diarization=${TRANSCRIPTION_DIARIZATION}")
+    [[ -n "${TRANSCRIPTION_RETURN_SEGMENTS:-}" ]] && params+=("--return_segments=${TRANSCRIPTION_RETURN_SEGMENTS}")
+    [[ -n "${TRANSCRIPTION_INITIAL_PROMPT:-}" ]] && params+=("--initial_prompt=${TRANSCRIPTION_INITIAL_PROMPT}")
+    [[ -n "${TRANSCRIPTION_TEMPERATURE:-}" ]] && params+=("--temperature=${TRANSCRIPTION_TEMPERATURE}")
+    [[ -n "${TRANSCRIPTION_BEAM_SIZE:-}" ]] && params+=("--beam_size=${TRANSCRIPTION_BEAM_SIZE}")
 
     # Call Python script
-    if ! python3 "${SCRIPT_DIR}/transcribe_audio.py" "$FILE.$AUDIO_FORMAT" "$TRANSCRIPTION_LANGUAGE"; then
+    if ! python3 "${SCRIPT_DIR}/transcribe_audio.py" "${params[@]}"; then
         echo "Error: Local Whisper transcription failed." >&2
         return 1
     fi
@@ -215,6 +235,10 @@ sanity_check() {
 }
 
 play_sound() {
+    if [[ "${NOTIFICATION_SOUND_ENABLED:-true}" != "true" ]]; then
+        return 0
+    fi
+
     local sound_file="$1"
     if command_exists paplay && [[ -f "$sound_file" ]]; then
         paplay "$sound_file" || true

@@ -5,6 +5,25 @@ import requests
 import time
 import subprocess
 import signal
+import dotenv
+from pathlib import Path
+
+def load_env():
+    """Load environment variables from .env file"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    env_path = os.path.join(script_dir, '.env')
+    if os.path.exists(env_path):
+        dotenv.load_dotenv(env_path)
+
+    # Set default values if not defined in .env
+    if not os.environ.get('WHISPER_SERVER_HOST'):
+        os.environ['WHISPER_SERVER_HOST'] = '127.0.0.1'
+    if not os.environ.get('WHISPER_SERVER_PORT'):
+        os.environ['WHISPER_SERVER_PORT'] = '5000'
+    if not os.environ.get('SERVER_TIMEOUT'):
+        os.environ['SERVER_TIMEOUT'] = '180'
+    if not os.environ.get('TRANSCRIPTION_LANGUAGE'):
+        os.environ['TRANSCRIPTION_LANGUAGE'] = 'es'
 
 def is_server_running():
     # Check if PID file exists
@@ -48,6 +67,12 @@ def start_server():
         print("Installing Flask...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "flask"])
 
+    try:
+        import dotenv
+    except ImportError:
+        print("Installing python-dotenv...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "python-dotenv"])
+
     # Start the server in the background
     subprocess.Popen(
         [sys.executable, server_path],
@@ -71,22 +96,45 @@ def start_server():
     print("Error: Timeout waiting for server to start")
     return False
 
-def transcribe_audio(audio_file, language="es"):
+def transcribe_audio(audio_file, language=None):
+    # Load environment variables
+    load_env()
+
+    # Use environment variables or defaults
+    host = os.environ.get('WHISPER_SERVER_HOST', '127.0.0.1')
+    port = os.environ.get('WHISPER_SERVER_PORT', '5000')
+    timeout = int(os.environ.get('SERVER_TIMEOUT', 180))
+    if language is None:
+        language = os.environ.get('TRANSCRIPTION_LANGUAGE', 'es')
+
     # Make sure the server is running
     if not is_server_running():
         if not start_server():
             print("Failed to start the transcription server")
             return None
 
-    print("Sending audio to transcription service...")
+    print(f"Sending audio to transcription service at {host}:{port}...")
     try:
         with open(audio_file, 'rb') as f:
             files = {'file': f}
-            data = {'language': language}
-            response = requests.post('http://127.0.0.1:5000/transcribe',
-                                    files=files,
-                                    data=data,
-                                    timeout=180)  # 3 minutes timeout
+
+            # Prepare all transcription parameters
+            data = {
+                'language': language,
+                'timestamps': os.environ.get('TRANSCRIPTION_TIMESTAMPS', 'false'),
+                'diarization': os.environ.get('TRANSCRIPTION_DIARIZATION', 'false'),
+                'return_segments': os.environ.get('TRANSCRIPTION_RETURN_SEGMENTS', 'false'),
+                'initial_prompt': os.environ.get('TRANSCRIPTION_INITIAL_PROMPT', ''),
+                'temperature': os.environ.get('TRANSCRIPTION_TEMPERATURE', '0.0'),
+                'beam_size': os.environ.get('TRANSCRIPTION_BEAM_SIZE', '5')
+            }
+
+            response = requests.post(
+                f'http://{host}:{port}/transcribe',
+                files=files,
+                data=data,
+                timeout=timeout
+            )
 
         if response.status_code == 200:
             result = response.json()
@@ -107,16 +155,20 @@ if __name__ == "__main__":
         print("Usage: python transcribe_audio.py <audio_file> [language]")
         sys.exit(1)
 
-    audio_file = sys.argv[1]
-    language = sys.argv[2] if len(sys.argv) > 2 else "es"
+    # Install required dependencies
+    required_packages = ["requests", "python-dotenv"]
+    for package in required_packages:
+        try:
+            __import__(package.replace("-", "_"))
+        except ImportError:
+            print(f"Installing required dependency: {package}")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
-    # Install requests if not available
-    try:
-        import requests
-    except ImportError:
-        print("Installing required dependency: requests")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
-        import requests
+    import requests
+    import dotenv
+
+    audio_file = sys.argv[1]
+    language = sys.argv[2] if len(sys.argv) > 2 else None  # Use default from .env if not specified
 
     # Transcribe
     result = transcribe_audio(audio_file, language)
