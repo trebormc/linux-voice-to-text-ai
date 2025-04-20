@@ -23,7 +23,7 @@ readonly AUDIO_INPUT="${AUDIO_INPUT:-@DEFAULT_SOURCE@}"
 readonly TRANSCRIPTION_LANGUAGE="${TRANSCRIPTION_LANGUAGE:-en}"
 readonly OPENAI_MODEL="${OPENAI_MODEL:-whisper-1}"
 readonly DEEPGRAM_PARAMS="${DEEPGRAM_PARAMS:-smart_format=true&paragraphs=true&punctuate=true&model=nova-2}"
-readonly AUDIO_FORMAT="${AUDIO_FORMAT:-flac}"
+readonly AUDIO_FORMAT="${AUDIO_FORMAT:-wav}"
 readonly AUDIO_CHANNELS="${AUDIO_CHANNELS:-1}"
 readonly AUDIO_SAMPLE_RATE="${AUDIO_SAMPLE_RATE:-16000}"
 readonly CLIPBOARD_AUTO_PASTE="${CLIPBOARD_AUTO_PASTE:-true}"
@@ -200,6 +200,10 @@ transcribe_with_local_whisper() {
 }
 
 transcribe() {
+    # Start timing
+    local start_time
+    start_time=$(date +%s.%N)
+
     if [[ "${ENABLE_LOCAL_WHISPER:-false}" == "true" ]]; then
         transcribe_with_local_whisper
     elif [[ -n "${DEEPGRAM_TOKEN:-}" ]]; then
@@ -210,6 +214,13 @@ transcribe() {
         echo "Error: No transcription service configured." >&2
         return 1
     fi
+
+    # Calculate and display elapsed time
+    local end_time
+    end_time=$(date +%s.%N)
+    local elapsed
+    elapsed=$(echo "$end_time - $start_time" | bc)
+    echo "Total transcription time: $elapsed seconds"
 }
 
 check_clipboard_tools() {

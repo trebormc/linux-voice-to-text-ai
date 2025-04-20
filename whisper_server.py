@@ -50,7 +50,7 @@ def load_environment():
     os.environ.setdefault('WHISPER_SERVER_HOST', '127.0.0.1')
     os.environ.setdefault('WHISPER_SERVER_PORT', '5000')
     os.environ.setdefault('SERVER_TIMEOUT', '180')
-    os.environ.setdefault('AUDIO_FORMAT', 'flac')
+    os.environ.setdefault('AUDIO_FORMAT', 'wav')
 
 def install_dependencies():
     """Install required dependencies if missing"""
@@ -64,6 +64,7 @@ def install_dependencies():
             subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
 def initialize_model():
+
     """Initialize and load the speech recognition model."""
     # Get configuration from environment variables
     model_size = os.environ.get('WHISPER_MODEL_SIZE', 'large-v3')
@@ -103,8 +104,10 @@ def initialize_model():
         speech_recognition_pipeline = pipeline(
             "automatic-speech-recognition",
             model=model_id,
-            torch_dtype=torch.float16 if device.startswith("cuda") else torch.float32,
+            torch_dtype=torch.float16,
             device=device,
+            # model_kwargs={"attn_implementation": "eager"},
+            # model_kwargs={"low_cpu_mem_usage": True, "use_safetensors": True},
         )
         logger.info(f"Model {model_id} loaded successfully on {device}")
         return speech_recognition_pipeline
@@ -130,7 +133,7 @@ def transcribe():
     return_segments = request.form.get('return_segments', 'false').lower() == 'true'
 
     # Save file temporarily with appropriate format
-    audio_format = os.environ.get('AUDIO_FORMAT', 'flac')
+    audio_format = os.environ.get('AUDIO_FORMAT', 'wav')
     temp_path = f"{TEMP_FILE_PREFIX}_{os.getpid()}.{audio_format}"
     audio_file.save(temp_path)
 
