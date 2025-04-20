@@ -8,7 +8,6 @@ import sys
 import subprocess
 import logging
 import time
-import argparse
 from pathlib import Path
 
 # Configure logging
@@ -43,24 +42,15 @@ def load_environment():
         logger.warning("python-dotenv not installed, skipping .env file loading")
 
     # Set defaults if not defined
-    if not os.environ.get('WHISPER_MODEL_SIZE'):
-        os.environ['WHISPER_MODEL_SIZE'] = 'large-v3'
-    if not os.environ.get('WHISPER_DEVICE'):
-        os.environ['WHISPER_DEVICE'] = 'auto'
-    if not os.environ.get('WHISPER_CPU_THREADS'):
-        os.environ['WHISPER_CPU_THREADS'] = '4'
-    if not os.environ.get('WHISPER_BATCH_SIZE'):
-        os.environ['WHISPER_BATCH_SIZE'] = '24'
-    if not os.environ.get('WHISPER_CHUNK_LENGTH'):
-        os.environ['WHISPER_CHUNK_LENGTH'] = '15'
-    if not os.environ.get('WHISPER_SERVER_HOST'):
-        os.environ['WHISPER_SERVER_HOST'] = '127.0.0.1'
-    if not os.environ.get('WHISPER_SERVER_PORT'):
-        os.environ['WHISPER_SERVER_PORT'] = '5000'
-    if not os.environ.get('SERVER_TIMEOUT'):
-        os.environ['SERVER_TIMEOUT'] = '180'
-    if not os.environ.get('AUDIO_FORMAT'):
-        os.environ['AUDIO_FORMAT'] = 'flac'
+    os.environ.setdefault('WHISPER_MODEL_SIZE', 'large-v3')
+    os.environ.setdefault('WHISPER_DEVICE', 'auto')
+    os.environ.setdefault('WHISPER_CPU_THREADS', '4')
+    os.environ.setdefault('WHISPER_BATCH_SIZE', '24')
+    os.environ.setdefault('WHISPER_CHUNK_LENGTH', '15')
+    os.environ.setdefault('WHISPER_SERVER_HOST', '127.0.0.1')
+    os.environ.setdefault('WHISPER_SERVER_PORT', '5000')
+    os.environ.setdefault('SERVER_TIMEOUT', '180')
+    os.environ.setdefault('AUDIO_FORMAT', 'flac')
 
 def install_dependencies():
     """Install required dependencies if missing"""
@@ -72,37 +62,6 @@ def install_dependencies():
         except ImportError:
             logger.info(f"Installing {package}...")
             subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-def is_server_running():
-    """Check if the server is already running"""
-    if not os.path.exists(PID_FILE_PATH):
-        return False
-
-    try:
-        with open(PID_FILE_PATH, "r") as f:
-            pid = int(f.read().strip())
-
-        # Check if process exists and is a whisper server
-        os.kill(pid, 0)  # This will raise an exception if process doesn't exist
-
-        # On Linux, we can check the process name
-        if os.path.exists(f"/proc/{pid}/cmdline"):
-            with open(f"/proc/{pid}/cmdline", "rb") as f:
-                cmdline = f.read().decode('utf-8', errors='ignore')
-                if "whisper_server.py" in cmdline:
-                    return True
-
-        # If we're here, PID exists but might not be our server
-        logger.warning(f"Process {pid} exists but might not be whisper server")
-        return True
-    except (ProcessLookupError, FileNotFoundError, ValueError):
-        # Process doesn't exist or PID file is invalid
-        logger.info("Removing stale PID file")
-        try:
-            os.remove(PID_FILE_PATH)
-        except:
-            pass
-        return False
 
 def initialize_model():
     """Initialize and load the speech recognition model."""
@@ -136,7 +95,6 @@ def initialize_model():
         'large-v1': 'openai/whisper-large-v1',
         'large-v2': 'openai/whisper-large-v2',
         'large-v3': 'openai/whisper-large-v3',
-        'large-v3-turbo': 'openai/whisper-large-v3-turbo'
     }
 
     model_id = model_mapping.get(model_size, 'openai/whisper-large-v3')
@@ -154,82 +112,10 @@ def initialize_model():
         logger.error(f"Error loading model: {str(e)}")
         raise
 
-def start_server(foreground=False):
-    """Start the server process"""
-    if is_server_running():
-        logger.info("Whisper server is already running")
-        return True
-
-    logger.info("Starting Whisper server...")
-
-    if foreground:
-        # Run in foreground
-        run_server()
-    else:
-        # Start in background
-        cmd = [sys.executable, __file__, "--run"]
-        logger.info(f"Launching background process: {' '.join(cmd)}")
-        with open(os.devnull, 'w') as devnull:
-            subprocess.Popen(
-                cmd,
-                stdout=devnull,
-                stderr=devnull,
-                start_new_session=True
-            )
-
-        # Wait for server to start
-        logger.info("Waiting for server to start...")
-        start_time = time.time()
-        while time.time() - start_time < 120:  # 2 minute timeout
-            if is_server_running():
-                logger.info("Server started successfully")
-                return True
-            time.sleep(1)
-
-        logger.error("Timeout waiting for server to start")
-        return False
-
-def stop_server():
-    """Stop the whisper server if running"""
-    if not os.path.exists(PID_FILE_PATH):
-        logger.info("No server is running")
-        return
-
-    try:
-        with open(PID_FILE_PATH, "r") as f:
-            pid = int(f.read().strip())
-
-        logger.info(f"Stopping server with PID {pid}")
-        os.kill(pid, signal.SIGTERM)
-
-        # Wait for the process to terminate
-        max_wait = 30
-        for _ in range(max_wait):
-            try:
-                os.kill(pid, 0)  # Check if process exists
-                time.sleep(1)
-            except OSError:
-                break
-
-        # If process is still running, force kill
-        try:
-            os.kill(pid, 0)
-            logger.warning(f"Server didn't terminate gracefully, sending SIGKILL")
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
-
-        # Remove PID file
-        if os.path.exists(PID_FILE_PATH):
-            os.remove(PID_FILE_PATH)
-
-        logger.info("Server stopped successfully")
-    except Exception as e:
-        logger.error(f"Error stopping server: {str(e)}")
-
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
     """Transcribe audio file using Whisper model."""
+    global pipe
     if 'file' not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -253,7 +139,7 @@ def transcribe():
         generate_kwargs = {
             "language": language,
             "task": "transcribe",
-            "beam_size": beam_size,
+            "num_beams": beam_size,
         }
 
         if initial_prompt:
@@ -298,9 +184,10 @@ def signal_handler(sig, frame):
         os.remove(PID_FILE_PATH)
     sys.exit(0)
 
-def run_server():
-    """Run the Flask server"""
-    global pipe
+if __name__ == '__main__':
+    # Load environment and install dependencies
+    load_environment()
+    install_dependencies()
 
     # Save PID for other processes to detect server
     with open(PID_FILE_PATH, "w") as pid_file:
@@ -316,44 +203,6 @@ def run_server():
     # Get host and port from environment
     host = os.environ.get('WHISPER_SERVER_HOST', '127.0.0.1')
     port = int(os.environ.get('WHISPER_SERVER_PORT', '5000'))
-    timeout = int(os.environ.get('SERVER_TIMEOUT', '180'))
 
     logger.info(f"Starting Flask server on {host}:{port}")
-    # We use threaded=True for better concurrency
-    app.run(host=host, port=port, threaded=True, timeout=timeout)
-
-def main():
-    """Main entry point with command line argument parsing"""
-    parser = argparse.ArgumentParser(description="Whisper Server for Speech Transcription")
-    parser.add_argument("--run", action="store_true", help="Run the server in foreground")
-    parser.add_argument("--stop", action="store_true", help="Stop the running server")
-    parser.add_argument("--restart", action="store_true", help="Restart the server")
-    parser.add_argument("--status", action="store_true", help="Check server status")
-
-    args = parser.parse_args()
-
-    # Load environment variables and install dependencies
-    load_environment()
-    install_dependencies()
-
-    if args.stop or args.restart:
-        stop_server()
-        if args.stop:
-            return
-
-    if args.status:
-        if is_server_running():
-            with open(PID_FILE_PATH, "r") as f:
-                pid = f.read().strip()
-            print(f"Whisper server is running with PID {pid}")
-        else:
-            print("Whisper server is not running")
-        return
-
-    if args.run:
-        run_server()
-    else:
-        start_server(foreground=False)
-
-if __name__ == '__main__':
-    main()
+    app.run(host=host, port=port, debug=False)

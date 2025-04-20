@@ -54,20 +54,25 @@ def is_server_running():
 
 def start_server():
     """Start the Whisper server if not running"""
-    print("Starting Whisper server...")
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    server_script = os.path.join(script_dir, "whisper_server.py")
+    starter_script = os.path.join(script_dir, "start_server.py")
 
-    # Ensure the file has execution permissions
-    os.chmod(server_script, 0o755)
+    # Make sure the script is executable
+    os.chmod(starter_script, 0o755)
 
-    # Start the server
     try:
-        subprocess.run([sys.executable, server_script], check=True)
-        time.sleep(5)  # Give time for server to initialize
+        # Run the starter script and capture output
+        result = subprocess.run(
+            [sys.executable, starter_script],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        print(result.stdout)
         return True
     except subprocess.CalledProcessError as e:
         print(f"Error starting server: {e}")
+        print(f"Error output: {e.stderr}")
         return False
 
 def transcribe_audio(audio_file, language=None):
@@ -100,7 +105,7 @@ def transcribe_audio(audio_file, language=None):
                 'return_segments': os.environ.get('TRANSCRIPTION_RETURN_SEGMENTS', 'false'),
                 'initial_prompt': os.environ.get('TRANSCRIPTION_INITIAL_PROMPT', ''),
                 'temperature': os.environ.get('TRANSCRIPTION_TEMPERATURE', '0.0'),
-                'beam_size': os.environ.get('TRANSCRIPTION_BEAM_SIZE', '5')
+                'num_beams': os.environ.get('TRANSCRIPTION_BEAM_SIZE', '5')
             }
 
             response = requests.post(
@@ -128,18 +133,6 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python transcribe_audio.py <audio_file> [language]")
         sys.exit(1)
-
-    # Install required dependencies
-    required_packages = ["requests", "python-dotenv"]
-    for package in required_packages:
-        try:
-            __import__(package.replace("-", "_"))
-        except ImportError:
-            print(f"Installing required dependency: {package}")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-    import requests
-    import dotenv
 
     audio_file = sys.argv[1]
     language = sys.argv[2] if len(sys.argv) > 2 else None  # Use default from .env if not specified
