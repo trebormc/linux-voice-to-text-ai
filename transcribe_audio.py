@@ -53,48 +53,22 @@ def is_server_running():
     return False
 
 def start_server():
+    """Start the Whisper server if not running"""
     print("Starting Whisper server...")
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    server_path = os.path.join(script_dir, "whisper_server.py")
+    server_script = os.path.join(script_dir, "whisper_server.py")
 
     # Ensure the file has execution permissions
-    os.chmod(server_path, 0o755)
+    os.chmod(server_script, 0o755)
 
-    # Install necessary dependencies
+    # Start the server
     try:
-        import flask
-    except ImportError:
-        print("Installing Flask...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "flask"])
-
-    try:
-        import dotenv
-    except ImportError:
-        print("Installing python-dotenv...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "python-dotenv"])
-
-    # Start the server in the background
-    subprocess.Popen(
-        [sys.executable, server_path],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True
-    )
-
-    # Wait until the server is ready (with timeout)
-    start_time = time.time()
-    while time.time() - start_time < 120:  # 2 minutes timeout
-        try:
-            # Check if the server is responding
-            if os.path.exists(os.path.expanduser("~/.whisper_server.pid")):
-                time.sleep(5)  # Give time for the model to fully load
-                return True
-        except:
-            pass
-        time.sleep(1)
-
-    print("Error: Timeout waiting for server to start")
-    return False
+        subprocess.run([sys.executable, server_script], check=True)
+        time.sleep(5)  # Give time for server to initialize
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Error starting server: {e}")
+        return False
 
 def transcribe_audio(audio_file, language=None):
     # Load environment variables
