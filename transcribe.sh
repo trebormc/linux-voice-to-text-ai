@@ -28,6 +28,10 @@ readonly AUDIO_CHANNELS="${AUDIO_CHANNELS:-1}"
 readonly AUDIO_SAMPLE_RATE="${AUDIO_SAMPLE_RATE:-16000}"
 readonly CLIPBOARD_AUTO_PASTE="${CLIPBOARD_AUTO_PASTE:-true}"
 readonly NOTIFICATION_SOUND_ENABLED="${NOTIFICATION_SOUND_ENABLED:-true}"
+readonly SOUND_START_RECORDING="${SOUND_START_RECORDING:-/usr/share/sounds/freedesktop/stereo/service-login.oga}"
+readonly SOUND_STOP_RECORDING="${SOUND_STOP_RECORDING:-/usr/share/sounds/freedesktop/stereo/service-logout.oga}"
+readonly SOUND_END_TRANSCRIPTION="${SOUND_END_TRANSCRIPTION:-/usr/share/sounds/freedesktop/stereo/audio-volume-change.oga}"
+
 
 command_exists() {
     command -v "$1" &> /dev/null
@@ -167,6 +171,9 @@ transcribe_with_local_whisper() {
         return 1
     fi
     echo "Transcribing with Local Whisper..."
+
+    # Activate virtual environment if you're using it
+    source ~/virtualenvs/whisper-env/bin/activate
 
     # Build parameters for the Python script
     local params=(
