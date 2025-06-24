@@ -2,8 +2,16 @@
 
 ## Install
 
+### Ubuntu/Debian (X11)
 ```bash
 sudo apt install pulseaudio-utils jq curl xdotool -y
+```
+
+### Fedora 43 (Wayland)
+```bash
+sudo dnf install pulseaudio-utils jq curl wl-clipboard ydotool bc -y
+# Run the Fedora setup script
+./setup_fedora.sh
 ```
 
 You can use the `.env.example` file as a template to create your own `.env` file. Simply duplicate the `.env.example` file, rename it to `.env`, and then fill in the corresponding API key, either for OpenAI or Deepgram, depending on which service you want to use. The `.env` file should be in the same directory as the script. The content of the file will be similar to this:
@@ -22,16 +30,26 @@ DEEPGRAM_TOKEN=xxxx
 
 ## Usage
 
+### Ubuntu/Debian (X11)
 Start the recording:
-
 ```bash
 ./transcribe.sh
 ```
 
 Stop the recording and transcribe the audio:
-
 ```bash
 ./transcribe.sh
+```
+
+### Fedora/Wayland
+Start the recording:
+```bash
+./transcribe_fedora.sh
+```
+
+Stop the recording and transcribe the audio:
+```bash
+./transcribe_fedora.sh
 ```
 
 The transcribed text will be automatically copied to your clipboard and pasted at your current cursor position.
@@ -41,16 +59,26 @@ The transcribed text will be automatically copied to your clipboard and pasted a
 - Supports both OpenAI and Deepgram for transcription
 - Automatically limits recording duration (default 2 minutes)
 - Plays sound notifications for start, stop, and end of transcription (if configured)
-- Supports various clipboard tools (xclip, wl-copy)
-- Automatically pastes transcribed text (using xdotool)
+- Supports various clipboard tools (xclip for X11, wl-copy for Wayland)
+- Automatically pastes transcribed text (using xdotool for X11, ydotool for Wayland)
+- Full Wayland support for Fedora 43 and other Wayland-based systems
 
 ## Dependencies
 
+### Common Dependencies
 - pulseaudio-utils (parecord)
 - jq
 - curl
-- xdotool
-- xclip or wl-copy (for clipboard functionality)
+- bc (for Fedora)
+
+### Platform-specific Dependencies
+**X11 (Ubuntu/Debian):**
+- xdotool (for automatic pasting)
+- xclip (for clipboard functionality)
+
+**Wayland (Fedora 43):**
+- wl-clipboard (for clipboard functionality)
+- ydotool (for automatic pasting - optional)
 
 Make sure all dependencies are installed before running the script.
 
@@ -62,8 +90,15 @@ To set up a keyboard shortcut:
 
 1. Open your system's keyboard settings.
 2. Add a new custom shortcut.
-3. Set the command to the full path of your script, e.g., `/path/to/your/transcribe.sh`
+3. Set the command to the full path of your script:
+   - For X11: `/path/to/your/transcribe.sh`
+   - For Wayland/Fedora: `/path/to/your/transcribe_fedora.sh`
 4. Assign a key combination that's easy for you to remember and use, e.g., `Ctrl+Alt+R`
+
+**Note for Wayland users:** If you want automatic pasting to work with ydotool, you need to:
+1. Add your user to the input group: `sudo usermod -aG input $USER`
+2. Enable and start ydotoold service: `systemctl --user enable --now ydotoold`
+3. Logout and login again for the changes to take effect
 
 With this setup, you can:
 - Press the shortcut once to start recording
